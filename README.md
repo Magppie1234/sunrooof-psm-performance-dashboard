@@ -10,4 +10,4 @@ The report's historical call fallback reads `https://sunrooof-agent-calls-202609
 
 ## Deploy from Git
 
-Connect this repository to the existing Vercel project `agent-productivity-dashboard`, using repository root `/` and production branch `main`. The existing project retains its URL and configured environment variables.
+This repository is connected to the existing Vercel project `agent-productivity-dashboard`, using repository root `/` and production branch `main`. Pushes to `main` deploy to the existing project, which retains its URL and configured environment variables.
