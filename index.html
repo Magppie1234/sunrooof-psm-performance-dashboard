@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Productivity</title>
+<style>
+:root{--navy:#1f2a44;--ink:#1d2433;--muted:#5b6475;--line:#d6dbe3;--bg:#f3f4f7;--card:#fff;
+--inb:#177a6c;--inb-l:#e5f3f0;--man:#2c5a86;--man-l:#e6edf5;--prog:#9a5b0a;--prog-l:#f6ecdd;
+--tot:#d8651c;--tot-l:#fdeee3;--grand:#fdf0c2;--red:#c62828;--pink:#f8c9cf;--yellow:#fbeaa3;--green:#c7ecc3}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1640px;margin:0 auto;padding:16px}
+.title{background:var(--navy);color:#fff;text-align:center;font-weight:700;font-size:20px;padding:12px 16px;display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap}
+.sub{text-align:center;color:var(--muted);font-style:italic;font-size:12px;margin:10px 0 14px}
+.bar{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:var(--muted)}
+.bar input,.bar button{font:inherit;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+.bar button{cursor:pointer;background:var(--navy);color:#fff;border-color:var(--navy)}
+.badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.demo{background:#fff3cd;color:#7a5b00}.badge.err{background:#fde2e2;color:var(--red)}.badge.live{background:#dff3e2;color:#1e6b2d}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--line);background:var(--card);margin-bottom:18px}
+.kpi{border-right:1px solid var(--line);text-align:center}.kpi:last-child{border-right:0}
+.kpi .l{font-weight:600;font-size:12px;padding:8px;border-bottom:1px solid var(--line)}
+.kpi .v{font-weight:700;font-size:20px;padding:10px}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;background:#fff;white-space:nowrap}
+th,td{border:1px solid var(--line);padding:4px 10px;text-align:center;font-variant-numeric:tabular-nums}
+th{color:#fff;font-size:11px;letter-spacing:.04em;text-transform:uppercase;font-weight:700}
+th.h{background:#3a4150}
+td.id{font-weight:700}td.nm{text-align:left}
+.c-inb{background:var(--inb)}.c-man{background:var(--man)}.c-prog{background:var(--prog)}.c-tot{background:var(--tot)}.c-oth{background:#5a4a86}
+td.b-inb{background:var(--inb-l)}td.b-man{background:var(--man-l)}td.b-prog{background:var(--prog-l)}td.b-tot{background:var(--tot-l)}td.b-oth{background:#eeeaf6}
+td.bold{font-weight:700}td.gap{color:var(--red);font-weight:700}
+.lp-red{background:var(--pink)!important}.lp-yel{background:var(--yellow)!important}.lp-grn{background:var(--green)!important}
+tr.grand td{background:var(--grand)!important;font-weight:700}
+.sec{margin-top:22px;display:inline-block;max-width:100%}
+.sec h3{margin:0;background:var(--navy);color:#fff;font-size:13px;padding:8px 14px}
+.sec td.mode{color:#fff;font-weight:700;text-align:left}
+.key{margin-top:16px;display:flex;gap:0;align-items:center;flex-wrap:wrap;font-size:12px}
+.key b{margin-right:14px}.key span{padding:5px 22px}
+.msg{padding:40px;text-align:center;color:var(--muted);background:#fff;border:1px solid var(--line)}
+th.sortable{cursor:pointer}
+@media (max-width:900px){.kpis{grid-template-columns:repeat(3,1fr)}.kpi:nth-child(3){border-right:0}.kpi:nth-child(-n+3){border-bottom:1px solid var(--line)}.title{font-size:16px}}
+@media (max-width:520px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi{border-bottom:1px solid var(--line)}.wrap{padding:10px}}
+.st{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;background:#8a93a3}
+.st.ready{background:#2e8b4a}.st.busy{background:#2c5a86}.st.pause{background:#c7780a}.st.acw{background:#6b4fa0}.st.out{background:#8a93a3}
+td.since{color:var(--muted);font-size:12px}
+.note{font-size:12px;color:var(--muted);margin:10px 0 0;font-style:italic}
+.filt{position:relative;display:inline-block}
+.filt>button{cursor:pointer}
+.panel{position:absolute;z-index:20;top:110%;left:0;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(20,30,50,.18);padding:10px;min-width:240px;max-height:320px;overflow:auto;text-align:left}
+.panel.hide{display:none}
+.panel .acts{display:flex;gap:8px;margin-bottom:8px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.panel .acts a{color:#2c5a86;cursor:pointer;font-size:12px;text-decoration:underline}
+.panel label{display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;color:var(--ink);font-size:13px;white-space:nowrap}
+.panel label:hover{background:#f3f4f7}
+.panel .aid{color:var(--muted);font-size:11px;margin-left:auto}
+td.nm{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+td.nm:hover{background:#eef2f8}
+.ovl{position:fixed;inset:0;background:rgba(20,26,40,.5);display:flex;align-items:flex-start;justify-content:center;padding:28px 14px;z-index:50}
+.ovl.hide{display:none}
+.dlg{background:#fff;border-radius:10px;width:100%;max-width:1200px;max-height:100%;display:flex;flex-direction:column;overflow:hidden}
+.dlg header{background:var(--navy);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.dlg header b{font-size:15px}
+.dlg header .sp{margin-left:auto;display:flex;gap:8px;align-items:center}
+.dlg header select,.dlg header button{font:inherit;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #fff3;background:#fff;color:var(--ink);cursor:pointer}
+.dlg .body{overflow:auto;padding:0 0 10px}
+.dlg .meta{padding:8px 14px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}
+.dlg table{white-space:nowrap}
+.dlg td,.dlg th{font-size:12px}
+.dlg td.l{text-align:left}
+.pill{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:700;color:#fff}
+.pill.inb{background:var(--inb)}.pill.man{background:var(--man)}.pill.prog{background:var(--prog)}.pill.oth{background:#5a4a86}
+.ok{color:#1e6b2d;font-weight:700}.no{color:var(--red)}
+.vm{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:700;background:#fbeaa3;color:#7a5b00;border:1px solid #e6c860}
+tr.vmrow td{background:#fffaf0}
+.bar .dp-wrap{text-align:left;font-size:13px;color:var(--ink)}
+.bar .dp-wrap .dp-btn{min-width:190px;padding:5px 10px}
+.bar .dp-wrap .dp-btn .n{background:#fff;color:var(--navy)}
+.bar .dp button{background:none;color:var(--ink);border:1px solid transparent;padding:0;border-radius:4px;font:inherit}
+.bar .dp .dp-my{font-weight:700;font-size:15px;border:0;padding:4px 2px}
+.bar .dp .dp-nav button{width:34px;height:30px;border-radius:6px;font-size:18px;line-height:1;border:0}
+.bar .dp .dp-nav button:hover:not(:disabled){background:var(--bg)}
+.bar .dp .dp-nav button:disabled{opacity:.3;cursor:default}
+.bar .dp .dp-day{font-size:13px;height:34px;margin:0 1px}
+.bar .dp .dp-day:hover:not(:disabled){background:var(--bg);border-color:var(--line)}
+.bar .dp .dp-day.out{color:var(--muted);opacity:.6}
+.bar .dp .dp-day.today{border-color:var(--ink);font-weight:700}
+.bar .dp .dp-day:disabled{opacity:.25;cursor:default}
+.bar .dp .dp-day.sel{background:#5f6368;color:#fff;font-weight:700;opacity:1}
+.bar .dp .dp-day.sel:hover{background:#4a4e53}
+.bar .dp .dp-day.sel.jl{border-top-left-radius:0;border-bottom-left-radius:0;margin-left:0}
+.bar .dp .dp-day.sel.jr{border-top-right-radius:0;border-bottom-right-radius:0;margin-right:0}
+.bar .dp .dp-months button{font-size:13px;padding:10px 0;border:1px solid var(--line);border-radius:6px}
+.bar .dp .dp-months button.cur{background:#5f6368;color:#fff;border-color:#5f6368}
+.bar .dp .dp-months button:disabled{opacity:.3;cursor:default}
+.bar .dp .dp-link{font-size:13px;border:0;color:#1a73e8;padding:4px 2px}
+.bar .dp .dp-apply{font-size:13px;font-weight:700;border:0;border-radius:6px;background:#1a73e8;color:#fff;padding:6px 12px}
+.bar .dp .dp-apply:disabled{opacity:.4;cursor:default}
+.bar .dp .dp-count{white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">Agent Productivity Report — <span id="dateTitle">…</span></div>
+  <div class="sub" id="sub">Login benchmark: 10 AM to 8 PM = 10:00:00 per agent • Data source: Ozonetel Agent State Summary API • Talk Time = Total Dial Duration</div>
+  <div class="bar">
+    <span>Date <input type="hidden" id="date"><button id="dateBtn" type="button" aria-label="Report dates"></button></span>
+    <button id="refresh">Refresh</button>
+    <button id="summaryCsv" type="button">Download raw summary CSV</button>
+    <button id="allCallsCsv" type="button">Download raw calls CSV</button>
+    <div class="filt">
+      <button id="filtBtn" type="button">Agents: all</button>
+      <div class="panel hide" id="filtPanel"><div class="acts"><a id="selAll">Select all</a><a id="selNone">Clear</a></div><div id="filtList"></div></div>
+    </div>
+    <span id="status"></span>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div id="main"><div class="msg">Loading…</div></div>
+  <div id="summary"></div>
+  <div id="liveNote" class="note"></div>
+  <div class="key" id="key"><b>Login % colour key</b><span class="lp-red">Below 70%</span><span class="lp-yel">70% to 90%</span><span class="lp-grn">90% and above</span></div>
+  <section id="slot-summary" aria-label="Productivity by time slot"></section>
+  <section id="time-slots" aria-label="Agent activity by time slot"></section>
+<div class="ovl hide" id="ovl"><div class="dlg">
+  <header><b id="dlgTitle">Calls</b>
+    <span class="sp">
+      <select id="dlgMode"><option value="">All modes</option></select>
+      <select id="dlgStatus"><option value="">All calls</option><option value="conn">Connected only</option><option value="miss">Not connected</option><option value="vm">Possible voicemail</option></select>
+      <button id="dlgCsv" type="button">CSV</button>
+      <button id="dlgClose" type="button">Close</button>
+    </span>
+  </header>
+  <div class="meta" id="dlgMeta"></div>
+  <div class="body" id="dlgBody"></div>
+</div></div>
+</div>
+<script src="/datepicker.js"></script>
+<script src="/slot-summary.js"></script>
+<script src="/time-slots.js"></script>
+<script>
+const BENCH = 10 * 3600;                 // 10:00:00 per agent
+const REFRESH_MS = 10 * 1000;            // check the shared live snapshot every 10 seconds
+const ORDER = ['Inbound', 'Manual', 'Progressive', 'Preview', 'Predictive', 'Blended'];
+const CLS = { Inbound: 'inb', Manual: 'man', Progressive: 'prog' };
+const $ = (s) => document.querySelector(s);
+const hms = (s) => { s = Math.max(0, Math.round(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; };
+const pct = (a, b) => b > 0 ? (a / b * 100).toFixed(1) + '%' : '0.0%';
+const lpClass = (p) => p >= 90 ? 'lp-grn' : p >= 70 ? 'lp-yel' : 'lp-red';
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const cls = (m) => CLS[m] || 'oth';
+const titleCase = (m) => m ? m.charAt(0).toUpperCase() + m.slice(1).toLowerCase() : 'Unknown';
+const fmtDate = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+const todayIST = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+const qs = new URLSearchParams(location.search);
+
+function build(rows, callRows) {
+  const agents = new Map(), modeSet = new Set();
+  const zero = () => ({ login: 0, talk: 0, idle: 0, pause: 0, wrapup: 0, busy: 0, calls: 0, connected: 0 });
+  for (const r of rows) {
+    const mode = titleCase(r.mode); modeSet.add(mode);
+    const key = r.agentId || r.agentName;
+    if (!agents.has(key)) agents.set(key, { id: r.agentId, name: r.agentName, modes: {}, tot: zero(), dates: new Set() });
+    const a = agents.get(key);
+    if ((r.login || 0) > 0) a.dates.add(r.date);
+    const m = a.modes[mode] || (a.modes[mode] = zero());
+    for (const f of Object.keys(m)) { m[f] += r[f] || 0; a.tot[f] += r[f] || 0; }
+  }
+  for (const r of callRows || []) {
+    const a = agents.get(r.agentId || r.agentName);
+    if (!a) continue;
+    const m = a.modes[titleCase(r.mode)] || (a.modes[titleCase(r.mode)] = zero());
+    m.calls += r.calls || 0; m.connected += r.connected || 0;
+    a.tot.calls += r.calls || 0; a.tot.connected += r.connected || 0;
+  }
+  const modes = [...modeSet].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
+  for (const m of ['Inbound', 'Manual', 'Progressive']) if (!modes.includes(m) && rows.length) modes.push(m);
+  modes.sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
+  const list = [...agents.values()].sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  for (const a of list) a.bench = BENCH * Math.max(1, a.dates.size);
+  const grand = { modes: {}, tot: zero() };
+  for (const m of modes) grand.modes[m] = zero();
+  for (const a of list) for (const m of modes) { const s = a.modes[m]; if (!s) continue; for (const f in s) { grand.modes[m][f] += s[f]; grand.tot[f] += s[f]; } }
+  return { list, modes, grand };
+}
+
+function render(data) {
+  const { list, modes, grand } = build(data.rows || [], data.callRows);
+  const count = (n) => data.callRows ? n : '—';
+  $('#dateTitle').textContent = data.dates && data.dates.length > 1 ? datesLabel(data.dates) : fmtDate(data.date);
+  const multi = data.dates && data.dates.length > 1;
+  const n = list.length;
+  const avgLogin = n ? list.reduce((s, a) => s + Math.min(a.tot.login / a.bench, 10), 0) / n * 100 : 0;
+  const totalGap = list.reduce((s, a) => s + Math.max(0, a.bench - a.tot.login), 0);
+  const k = [['Total Agents', n], ['Total Login', hms(grand.tot.login)], ['Avg Login %', avgLogin.toFixed(1) + '%'],
+    ['Total Talk Time', hms(grand.tot.talk)], ['Overall Prod %', pct(grand.tot.talk, grand.tot.login)], ['Total Gap', hms(totalGap)]];
+  $('#kpis').innerHTML = k.map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+
+  if (!n) { $('#main').innerHTML = '<div class="msg">No agent activity found for ' + (multi ? 'these dates' : 'this date') + ' yet.</div>'; $('#summary').innerHTML = ''; return; }
+
+  const modeCells = (s, c, bold) => {
+    s = s || { login: 0, talk: 0, idle: 0 };
+    return `<td class="b-${c}">${hms(s.login)}</td><td class="b-${c}">${hms(s.talk)}</td><td class="b-${c}">${count(s.calls || 0)}</td><td class="b-${c}">${count(s.connected || 0)}</td>`;
+  };
+  let h = '<div class="scroll"><table><thead><tr><th class="h" rowspan="2">Agent ID</th><th class="h" rowspan="2">Agent Name</th>';
+  modes.forEach((m, i) => h += `<th class="c-${cls(m)}" colspan="4">Component ${i + 1} — ${esc(m)}</th>`);
+  h += '<th class="c-tot" colspan="6">' + (multi ? 'Total for Selected Days' : 'Daily Total') + '</th></tr><tr>';
+  modes.forEach((m) => h += ['Login', 'Talk Time', 'Calls', 'Connected'].map((t) => `<th class="c-${cls(m)}">${t}</th>`).join(''));
+  h += ['Total Login', 'Total Talk Time', 'Login %', 'Calls', 'Connected', multi ? 'Gap vs 10h/day' : 'Gap vs 10h'].map((t) => `<th class="c-tot">${t}</th>`).join('') + '</tr></thead><tbody>';
+  for (const a of list) {
+    const lp = a.tot.login / a.bench * 100;
+    h += `<tr><td class="id">${esc(a.id)}</td><td class="nm">${esc(a.name)}</td>`;
+    modes.forEach((m) => h += modeCells(a.modes[m], cls(m)));
+    h += `<td class="b-tot bold">${hms(a.tot.login)}</td><td class="b-tot bold">${hms(a.tot.talk)}</td><td class="b-tot bold ${lpClass(lp)}">${lp.toFixed(1)}%</td><td class="b-tot bold">${count(a.tot.calls)}</td><td class="b-tot bold">${count(a.tot.connected)}</td><td class="b-tot gap">${hms(Math.max(0, a.bench - a.tot.login))}</td></tr>`;
+  }
+  h += `<tr class="grand"><td colspan="2" style="text-align:left">GRAND TOTAL (${n} agents)</td>`;
+  modes.forEach((m) => h += modeCells(grand.modes[m], cls(m)));
+  h += `<td>${hms(grand.tot.login)}</td><td>${hms(grand.tot.talk)}</td><td>${avgLogin.toFixed(1)}%</td><td>${count(grand.tot.calls)}</td><td>${count(grand.tot.connected)}</td><td class="gap">${hms(totalGap)}</td></tr></tbody></table></div>`;
+  $('#main').innerHTML = h;
+
+  const sm = modes.filter((m) => grand.modes[m].login > 0).sort((a, b) => grand.modes[b].login - grand.modes[a].login);
+  let s = '<div class="sec"><h3>Mode Type Summary</h3><div class="scroll"><table><thead><tr>' +
+    ['Mode Type', 'Login', 'Login Share', 'Talk Time', 'Calls', 'Idle', 'Connected', 'Wrap-up', 'Break'].map((t) => `<th class="h">${t}</th>`).join('') + '</tr></thead><tbody>';
+  for (const m of sm) {
+    const g = grand.modes[m];
+    s += `<tr><td class="mode c-${cls(m)}">${esc(m)}</td><td>${hms(g.login)}</td><td>${pct(g.login, grand.tot.login)}</td><td>${hms(g.talk)}</td><td>${count(g.calls)}</td><td>${hms(g.idle)}</td><td>${count(g.connected)}</td><td>${hms(g.wrapup)}</td><td>${hms(g.pause)}</td></tr>`;
+  }
+  const t = grand.tot;
+  s += `<tr class="grand"><td style="text-align:left">Total</td><td>${hms(t.login)}</td><td>100.0%</td><td>${hms(t.talk)}</td><td>${count(t.calls)}</td><td>${hms(t.idle)}</td><td>${count(t.connected)}</td><td>${hms(t.wrapup)}</td><td>${hms(t.pause)}</td></tr></tbody></table></div></div>`;
+  if (!data.callRows) s += `<div class="note">${data.countError ? 'Call counts are temporarily unavailable: ' + esc(data.countError) : 'Loading call counts…'}</div>`;
+  $('#summary').innerHTML = s;
+}
+
+
+function stClass(st) { st = String(st || '').toUpperCase(); if (/READY/.test(st) && !/NOT/.test(st)) return 'ready'; if (/BUSY|CALL|TALK|DIAL/.test(st)) return 'busy'; if (/ACW|WRAP/.test(st)) return 'acw'; if (/PAUSE|BREAK|NOT/.test(st)) return 'pause'; return 'out'; }
+function renderLive(data) {
+  $('#dateTitle').textContent = fmtDate(data.date) + ' (Live)';
+  const agents = new Map(), modeSet = new Set();
+  const z = () => ({ calls: 0, connected: 0, talk: 0, wrapup: 0 });
+  for (const r of data.rows) {
+    const mode = titleCase(r.mode); modeSet.add(mode);
+    if (!agents.has(r.agentId)) agents.set(r.agentId, { id: r.agentId, name: r.agentName, modes: {}, tot: z(), last: '' });
+    const a = agents.get(r.agentId), m = a.modes[mode] || (a.modes[mode] = z());
+    for (const f of ['calls', 'connected', 'talk', 'wrapup']) { m[f] += r[f]; a.tot[f] += r[f]; }
+    if (r.lastCall > a.last) a.last = r.lastCall;
+  }
+  const st = new Map((data.status || []).map((s) => [s.agentId, s]));
+  for (const s of data.status || []) if (!agents.has(s.agentId)) agents.set(s.agentId, { id: s.agentId, name: s.agentName, modes: {}, tot: z(), last: '' });
+  const modes = [...modeSet]; for (const m of ['Inbound', 'Manual', 'Progressive']) if (!modes.includes(m)) modes.push(m);
+  modes.sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
+  const list = [...agents.values()].sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  const g = { modes: Object.fromEntries(modes.map((m) => [m, z()])), tot: z() };
+  for (const a of list) for (const m of modes) { const s = a.modes[m]; if (s) for (const f in s) { g.modes[m][f] += s[f]; g.tot[f] += s[f]; } }
+  const onBreak = (data.status || []).filter((s) => stClass(s.state) === 'pause').length;
+  const active = (data.status || []).filter((s) => stClass(s.state) !== 'out').length;
+  const k = [['Agents Logged In', data.status && data.status.length ? active : list.length], ['Total Calls', g.tot.calls], ['Connected', g.tot.connected],
+    ['Total Talk Time', hms(g.tot.talk)], ['Connect Rate', pct(g.tot.connected, g.tot.calls)], ['On Break Now', data.status && data.status.length ? onBreak : '—']];
+  $('#kpis').innerHTML = k.map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+  if (!list.length) { $('#main').innerHTML = '<div class="msg">No calls yet today.</div>'; $('#summary').innerHTML = ''; return; }
+  const cells = (s, c) => { s = s || z(); return `<td class="b-${c}">${s.calls}</td><td class="b-${c}">${s.connected}</td><td class="b-${c}">${hms(s.talk)}</td>`; };
+  let h = '<div class="scroll"><table><thead><tr><th class="h" rowspan="2">Agent ID</th><th class="h" rowspan="2">Agent Name</th><th class="h" colspan="2">Live Status</th>';
+  modes.forEach((m, i) => h += `<th class="c-${cls(m)}" colspan="3">Component ${i + 1} — ${esc(m)}</th>`);
+  h += '<th class="c-tot" colspan="5">Today So Far</th></tr><tr><th class="h">State</th><th class="h">Mode · Since</th>';
+  modes.forEach((m) => h += ['Calls', 'Connected', 'Talk Time'].map((t) => `<th class="c-${cls(m)}">${t}</th>`).join(''));
+  h += ['Calls', 'Connected', 'Talk Time', 'Avg Talk', 'Last Call'].map((t) => `<th class="c-tot">${t}</th>`).join('') + '</tr></thead><tbody>';
+  for (const a of list) {
+    const s = st.get(a.id);
+    h += `<tr><td class="id">${esc(a.id)}</td><td class="nm">${esc(a.name)}</td>`;
+    h += s ? `<td><span class="st ${stClass(s.state)}">${esc(s.state)}</span></td><td class="since">${esc(s.mode || '')} · ${esc(s.since || '')}</td>` : '<td><span class="st out">—</span></td><td class="since"></td>';
+    modes.forEach((m) => h += cells(a.modes[m], cls(m)));
+    h += `<td class="b-tot bold">${a.tot.calls}</td><td class="b-tot bold">${a.tot.connected}</td><td class="b-tot bold">${hms(a.tot.talk)}</td><td class="b-tot">${hms(a.tot.connected ? a.tot.talk / a.tot.connected : 0)}</td><td class="b-tot">${esc(a.last || '—')}</td></tr>`;
+  }
+  h += `<tr class="grand"><td colspan="4" style="text-align:left">GRAND TOTAL (${list.length} agents)</td>`;
+  modes.forEach((m) => h += cells(g.modes[m], cls(m)));
+  h += `<td>${g.tot.calls}</td><td>${g.tot.connected}</td><td>${hms(g.tot.talk)}</td><td>${hms(g.tot.connected ? g.tot.talk / g.tot.connected : 0)}</td><td></td></tr></tbody></table></div>`;
+  $('#main').innerHTML = h;
+  let s2 = '<div class="sec"><h3>Mode Type Summary — Today</h3><div class="scroll"><table><thead><tr>' +
+    ['Mode Type', 'Calls', 'Call Share', 'Connected', 'Connect Rate', 'Talk Time', 'Avg Talk', 'Wrap-up'].map((t) => `<th class="h">${t}</th>`).join('') + '</tr></thead><tbody>';
+  for (const m of modes.filter((m) => g.modes[m].calls)) {
+    const x = g.modes[m];
+    s2 += `<tr><td class="mode c-${cls(m)}">${esc(m)}</td><td>${x.calls}</td><td>${pct(x.calls, g.tot.calls)}</td><td>${x.connected}</td><td>${pct(x.connected, x.calls)}</td><td>${hms(x.talk)}</td><td>${hms(x.connected ? x.talk / x.connected : 0)}</td><td>${hms(x.wrapup)}</td></tr>`;
+  }
+  s2 += `<tr class="grand"><td style="text-align:left">Total</td><td>${g.tot.calls}</td><td>100.0%</td><td>${g.tot.connected}</td><td>${pct(g.tot.connected, g.tot.calls)}</td><td>${hms(g.tot.talk)}</td><td>${hms(g.tot.connected ? g.tot.talk / g.tot.connected : 0)}</td><td>${hms(g.tot.wrapup)}</td></tr></tbody></table></div></div>`;
+  if (data.unassigned) s2 += `<div class="note">Inbound calls not routed to any agent today: ${data.unassigned} (${data.unassignedMissed} unanswered).</div>`;
+  $('#summary').innerHTML = s2;
+}
+
+// ---- Agent filter (saved in this browser)
+let selected = null; // null = show everyone
+try { const v = localStorage.getItem('agentFilter'); if (v) selected = new Set(JSON.parse(v)); } catch (e) {}
+let knownAgents = [];
+function saveFilter() { try { selected ? localStorage.setItem('agentFilter', JSON.stringify([...selected])) : localStorage.removeItem('agentFilter'); } catch (e) {} }
+function isShown(id) { return !selected || selected.has(id); }
+function applyFilter(data) {
+  const seen = new Map();
+  for (const r of data.rows || []) if (!seen.has(r.agentId)) seen.set(r.agentId, r.agentName || r.agentId);
+  for (const s of data.status || []) if (!seen.has(s.agentId)) seen.set(s.agentId, s.agentName || s.agentId);
+  knownAgents = [...seen].map(([id, name]) => ({ id, name })).sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  drawFilter();
+  return { ...data, rows: (data.rows || []).filter((r) => isShown(r.agentId)),
+    callRows: data.callRows && data.callRows.filter((r) => isShown(r.agentId)),
+    status: (data.status || []).filter((s) => isShown(s.agentId)) };
+}
+function drawFilter() {
+  const n = selected ? knownAgents.filter((a) => selected.has(a.id)).length : knownAgents.length;
+  $('#filtBtn').textContent = `Agents: ${selected ? n + ' of ' + knownAgents.length : 'all'} ▾`;
+  $('#filtList').innerHTML = knownAgents.map((a) =>
+    `<label><input type="checkbox" data-id="${esc(a.id)}"${isShown(a.id) ? ' checked' : ''}> ${esc(a.name)} <span class="aid">${esc(a.id)}</span></label>`).join('')
+    || '<div style="color:var(--muted);font-size:12px">No agents yet</div>';
+}
+$('#filtBtn').addEventListener('click', () => $('#filtPanel').classList.toggle('hide'));
+document.addEventListener('click', (e) => { if (!e.target.closest('.filt')) $('#filtPanel').classList.add('hide'); });
+$('#filtList').addEventListener('change', (e) => {
+  const id = e.target.dataset.id; if (!id) return;
+  if (!selected) selected = new Set(knownAgents.map((a) => a.id));
+  e.target.checked ? selected.add(id) : selected.delete(id);
+  if (knownAgents.every((a) => selected.has(a.id))) selected = null;
+  saveFilter(); drawFilter(); if (lastData) draw(lastData);
+});
+$('#selAll').addEventListener('click', () => { selected = null; saveFilter(); drawFilter(); if (lastData) draw(lastData); });
+$('#selNone').addEventListener('click', () => { selected = new Set(); saveFilter(); drawFilter(); if (lastData) draw(lastData); });
+
+// ---- Per-agent call list
+let callRows = [], callAgent = null;
+// Possible voicemail / auto-answer: rang a while, "answered", then only a few seconds of talk (either side may end it).
+const VM = { minRing: 0, maxTalk: 17 };
+const isVm = (c) => c.status === 'Answered' && c.talk > 0 && c.talk <= VM.maxTalk && c.ring >= VM.minRing;
+const modeCls = (m) => ({ inbound: 'inb', manual: 'man', progressive: 'prog' })[String(m).toLowerCase()] || 'oth';
+async function openCalls(id, name) {
+  callAgent = { id, name };
+  $('#ovl').classList.remove('hide');
+  $('#dlgTitle').textContent = `${name} (${id})`;
+  $('#dlgMeta').textContent = 'Loading calls…';
+  $('#dlgBody').innerHTML = '';
+  try {
+    const days = pickedDates().slice().reverse(), all = [];
+    for (const [i, day] of days.entries()) {
+      if (days.length > 1) $('#dlgMeta').textContent = `Loading calls — day ${i + 1} of ${days.length}…`;
+      const r = await fetch(`/api/report?view=calls&date=${encodeURIComponent(day)}&agent=${encodeURIComponent(id)}`);
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Request failed');
+      (d.calls || []).forEach((c) => all.push({ ...c, date: day }));
+    }
+    callRows = all;
+    const modes = [...new Set(callRows.map((c) => titleCase(c.mode)))];
+    $('#dlgMode').innerHTML = '<option value="">All modes</option>' + modes.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    drawCalls();
+  } catch (e) {
+    $('#dlgMeta').textContent = '';
+    $('#dlgBody').innerHTML = `<div class="msg">Couldn't load calls: ${esc(e.message)}</div>`;
+  }
+}
+function drawCalls() {
+  const fm = $('#dlgMode').value, fs = $('#dlgStatus').value;
+  const conn = (c) => c.status === 'Answered' && c.talk > 0;
+  const list = callRows.filter((c) => (!fm || titleCase(c.mode) === fm) && (!fs || (fs === 'vm' ? isVm(c) : fs === 'conn' ? conn(c) : !conn(c))));
+  const nvm = list.filter(isVm).length;
+  const talk = list.reduce((s, c) => s + c.talk, 0), nc = list.filter(conn).length;
+  const multiDay = pickedDates().length > 1;
+  $('#dlgMeta').textContent = `${multiDay ? datesLabel(pickedDates()) : fmtDate($('#date').value)} · ${list.length} calls · ${nc} connected (${pct(nc, list.length)}) · talk time ${hms(talk)} · avg ${hms(nc ? talk / nc : 0)} · ${nvm} possible voicemail`;
+  if (!list.length) { $('#dlgBody').innerHTML = '<div class="msg">No calls for this selection.</div>'; return; }
+  const head = (multiDay ? ['Date'] : []).concat(['Start', 'Mode', 'Number', 'Campaign / Skill', 'Status', 'Ring', 'Talk', 'Wrap-up', 'Hold', 'Hung up by', 'Disposition']);
+  $('#dlgBody').innerHTML = '<div class="scroll"><table><thead><tr>' + head.map((h) => `<th class="h">${h}</th>`).join('') + '</tr></thead><tbody>' +
+    list.map((c) => `<tr${isVm(c) ? ' class="vmrow"' : ''}>${multiDay ? `<td>${esc(shortDate(c.date))}</td>` : ''}<td>${esc(c.start || '')}</td><td><span class="pill ${modeCls(c.mode)}">${esc(titleCase(c.mode))}</span></td>` +
+      `<td>${esc(c.number)}${c.recording ? ` <a href="${esc(c.recording)}" target="_blank" rel="noopener">▶</a>` : ''}</td>` +
+      `<td class="l">${esc(c.campaign)}${c.skill ? ' · ' + esc(c.skill) : ''}</td>` +
+      `<td class="${conn(c) ? 'ok' : 'no'}">${esc(conn(c) ? 'Connected' : c.status || 'Unanswered')}${isVm(c) ? '<span class="vm" title="Answered, but only ' + VM.maxTalk + ' s or less of talk — play the recording to confirm">Possible voicemail</span>' : ''}</td>` +
+      `<td>${hms(c.ring)}</td><td>${hms(c.talk)}</td><td>${hms(c.wrapup)}</td><td>${hms(c.hold)}</td>` +
+      `<td>${esc(c.hangupBy)}</td><td class="l">${esc(c.disposition)}</td></tr>`).join('') + '</tbody></table></div>';
+}
+function callsCsv() {
+  const head = ['Date', 'Start', 'End', 'Mode', 'Number', 'Campaign', 'Skill', 'Status', 'PossibleVoicemail', 'RingSecs', 'Talk time (minutes)', 'Wrap-up time (minutes)', 'HoldSecs', 'HangupBy', 'Disposition'];
+  const rows = callRows.map((c) => [c.date, c.start, c.end, titleCase(c.mode), c.number, c.campaign, c.skill, c.status, isVm(c) ? 'Yes' : '', c.ring, minutes(c.talk), minutes(c.wrapup), c.hold, c.hangupBy, c.disposition]);
+  const pd = pickedDates();
+  saveCsv(`calls_${callAgent ? callAgent.id : 'agent'}_${pd[0]}${pd.length > 1 ? '_to_' + pd[pd.length - 1] : ''}.csv`,head,rows);
+}
+function minutes(value){return value==null||value===''?'':(Number(value)/60).toFixed(2)}
+function saveCsv(name,head,rows){
+  const cell=value=>{const raw=String(value??'');const safe=/^[\s]*[=+\-@]/.test(raw)?"'"+raw:raw;return '"'+safe.replace(/"/g,'""')+'"'};
+  const csv='\uFEFF'+[head,...rows].map(row=>row.map(cell).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function exportDates(){const dates=pickedDates();return dates.length===1?dates[0]:dates[0]+'_to_'+dates.at(-1)}
+$('#summaryCsv').addEventListener('click',()=>{
+  const dates=pickedDates();
+  if(!lastData||JSON.stringify(lastData.dates||[lastData.date])!==JSON.stringify(dates)){
+    $('#status').textContent='Wait for the selected report to finish loading.';return;
+  }
+  const rows=(lastData.rows||[]).filter(r=>isShown(r.agentId));
+  if(!rows.length){$('#status').textContent='No summary rows to download for this selection.';return}
+  const counts=new Map((lastData.callRows||[]).map(r=>[[r.date||lastData.date,r.agentId,r.mode].join('|'),r]));
+  const head=['Date','Agent ID','Agent name','Mode','Login seconds','Talk time (minutes)','Idle seconds','Pause seconds','Busy seconds','Wrap-up time (minutes)','Calls','Connected','Last call'];
+  saveCsv('agent-productivity-raw-summary-'+exportDates()+'.csv',head,rows.map(r=>{const count=counts.get([r.date||lastData.date,r.agentId,r.mode].join('|'));return [r.date||lastData.date,r.agentId,r.agentName,r.mode,r.login,minutes(r.talk),r.idle,r.pause,r.busy,minutes(r.wrapup),r.calls??count?.calls,r.connected??count?.connected,r.lastCall]}));
+});
+$('#allCallsCsv').addEventListener('click',async()=>{
+  const button=$('#allCallsCsv'),dates=pickedDates(),suffix=exportDates(),selectedIds=selected?new Set(selected):null;
+  button.disabled=true;button.textContent='Loading call records…';
+  try{
+    const all=[];
+    for(const date of dates){
+      const response=await fetch('/api/report?'+new URLSearchParams({view:'calls',date}),{cache:'no-store'});
+      const data=await response.json();
+      if(!response.ok||!data.ok)throw Error(`${date}: ${data.error||'Could not load call records'}`);
+      for(const c of data.calls||[])if(!selectedIds||selectedIds.has(c.agentId))all.push({...c,date});
+    }
+    if(!all.length){$('#status').textContent='No call records to download for this selection.';return}
+    const head=['Date','Agent ID','Agent name','Start','End','Mode','Number','Campaign','Skill','Status','Ring seconds','Talk time (minutes)','Wrap-up time (minutes)','Hold seconds','Duration seconds','Hung up by','Disposition','Customer status','Recording URL'];
+    saveCsv('agent-productivity-raw-calls-'+suffix+'.csv',head,all.map(c=>[c.date,c.agentId,c.agentName,c.start,c.end,c.mode,c.number,c.campaign,c.skill,c.status,c.ring,minutes(c.talk),minutes(c.wrapup),c.hold,c.duration,c.hangupBy,c.disposition,c.customerStatus,c.recording]));
+  }catch(error){$('#status').textContent='CSV download failed: '+String(error.message||error)}
+  finally{button.disabled=false;button.textContent='Download raw calls CSV'}
+});
+function closeCalls() { $('#ovl').classList.add('hide'); }
+$('#dlgClose').addEventListener('click', closeCalls);
+$('#dlgCsv').addEventListener('click', callsCsv);
+$('#dlgMode').addEventListener('change', drawCalls);
+$('#dlgStatus').addEventListener('change', drawCalls);
+$('#ovl').addEventListener('click', (e) => { if (e.target.id === 'ovl') closeCalls(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCalls(); });
+document.addEventListener('click', (e) => {
+  const cell = e.target.closest('#main td.nm'); if (!cell) return;
+  const row = cell.parentElement;
+  openCalls(row.cells[0].textContent.trim(), cell.textContent.trim());
+});
+
+let lastData = null;
+function draw(data) {
+  const f = applyFilter(data);
+  slotSummary.setSelection(pickedDates());
+  timeSlots.setSelection(pickedDates(), knownAgents, data.live ? data.slots : null);
+  if (selected && !knownAgents.some((a) => selected.has(a.id))) { $('#kpis').innerHTML = ''; $('#main').innerHTML = '<div class="msg">No agents selected — tick some in the Agents filter.</div>'; $('#summary').innerHTML = ''; return; }
+  if (f.live) renderLive(f); else render(f);
+}
+
+let loadSeq = 0;
+let rateRetry = null;
+async function loadCallCounts(data, dates, seq) {
+  if (data.demo || qs.get('demo') === '1') { data.countError = 'Call records are unavailable in sample mode.'; draw(data); return; }
+  try {
+    const rows = [];
+    for (const day of dates) {
+      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day}));
+      const result = await response.json();
+      if (seq !== loadSeq) return;
+      if (!result.ok) throw new Error(result.error || 'Request failed');
+      rows.push(...result.rows.map(r=>({...r,date:day})));
+    }
+    if (seq !== loadSeq) return;
+    data.callRows = rows;
+    draw(data);
+  } catch (e) {
+    if (seq !== loadSeq) return;
+    data.countError = String(e.message || e);
+    draw(data);
+  }
+}
+async function loadMany(dates) {
+  const seq = ++loadSeq, rows = [], empty = [];
+  let fetchedAt = new Date().toISOString();
+  try {
+    for (const [i, d] of dates.entries()) {
+      $('#status').innerHTML = `Loading day ${i + 1} of ${dates.length}…`;
+      const p = new URLSearchParams({ date: d }); if (qs.get('demo') === '1') p.set('demo', '1');
+      const r = await fetch('/api/report?' + p);
+      const data = await r.json();
+      if (seq !== loadSeq) return;
+      if (!data.ok) throw new Error(`${shortDate(d)}: ${data.error || 'Request failed'}`);
+      if (data.fetchedAt && data.fetchedAt < fetchedAt) fetchedAt = data.fetchedAt;
+      if (!(data.rows || []).length) empty.push(d);
+      (data.rows || []).forEach((row) => rows.push({ ...row, date: d }));
+    }
+    lastData = { ok: true, date: dates[dates.length - 1], dates, rows, fetchedAt };
+    draw(lastData);
+    $('#key').style.display = '';
+    $('#sub').textContent = 'Login benchmark: 10 AM to 8 PM = 10:00:00 per agent per day worked • Data source: Ozonetel Agent State Summary API • Talk Time = Total Dial Duration';
+    $('#liveNote').textContent = empty.length ? 'No summary data for ' + empty.map(shortDate).join(', ') + (empty.includes(todayIST()) ? ' — today’s summary is published after the day closes.' : '.') : '';
+    const at = new Date(fetchedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' });
+    $('#status').innerHTML = `Updated ${at} IST · ${dates.length} days`;
+    loadCallCounts(lastData, dates, seq);
+  } catch (e) {
+    if (seq !== loadSeq) return;
+    $('#status').innerHTML = `<span class="badge err">Error</span> ${esc(e.message)}`;
+    $('#main').innerHTML = `<div class="msg">Couldn't load data: ${esc(e.message)}</div>`;
+  }
+}
+
+async function load() {
+  const dates = pickedDates();
+  if (dates.length > 1) return loadMany(dates);
+  if (rateRetry) { clearTimeout(rateRetry); rateRetry = null; }
+  const seq = ++loadSeq;
+  const d = $('#date').value || todayIST();
+  if (!lastData || lastData.date !== d) $('#status').innerHTML = 'Loading…';
+  try {
+    const isLive = d === todayIST() && qs.get('demo') !== '1';
+    const p = new URLSearchParams({ date: d }); if (qs.get('demo') === '1') p.set('demo', '1'); if (isLive) p.set('view', 'live');
+    const r = await fetch('/api/report?' + p);
+    const data = await r.json();
+    if (seq !== loadSeq) return;
+    if (!data.ok) throw new Error(data.error || 'Request failed');
+    lastData = data;
+    draw(data);
+    $('#key').style.display = data.live ? 'none' : '';
+    $('#sub').textContent = data.live ? 'Live from Ozonetel call records and agent status • Talk Time = time on call • Checks every 10 seconds; call records refresh about every 35 seconds'
+      : 'Login benchmark: 10 AM to 8 PM = 10:00:00 per agent • Data source: Ozonetel Agent State Summary API • Talk Time = Total Dial Duration';
+    $('#liveNote').textContent = data.live ? 'Live view: calls and talk time come from today’s call records (talk time = time actually on call); agent status refreshes as Ozonetel allows. Login %, Idle % and Gap vs 10h come from Ozonetel’s day summary, which is published after the day closes — pick yesterday’s date to see the full report.' : '';
+    const at = new Date(data.fetchedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' });
+    $('#status').innerHTML = data.demo ? `<span class="badge demo">Sample data</span> ${esc(data.note || '')}`
+      : data.stale ? `<span class="badge err">Showing last good data</span> ${esc(data.warning || '')}`
+      : data.live ? `<span class="badge live">Live</span> Updated ${at} IST · checks every 10 seconds`
+      : `Report updated ${at} IST`;
+    if (!data.live) loadCallCounts(data, [d], seq);
+  } catch (e) {
+    if (seq !== loadSeq) return;
+    const limited = /max limit|rate limit/i.test(e.message);
+    $('#status').innerHTML = limited ? '<span class="badge err">Ozonetel rate limit</span> Retrying in about a minute…'
+      : `<span class="badge err">Error</span> ${esc(e.message)}`;
+    if (!$('#main table')) $('#main').innerHTML = `<div class="msg">Couldn't load data: ${esc(e.message)}</div>`;
+    if (limited && d < todayIST()) rateRetry = setTimeout(() => {
+      if (seq === loadSeq && pickedDates().length === 1 && $('#date').value === d) load();
+    }, 65000);
+  }
+}
+// ---- Date picker (click dates to add/remove, drag or Shift-click for a range, Apply)
+const shortDate = (d) => DatePicker.label([d]).replace(/ \d{4}$/, '');
+const datesLabel = (ds) => DatePicker.label(ds) + ' (' + ds.length + ' days)';
+const startDates = (() => {
+  const t = todayIST();
+  const l = (qs.get('dates') || qs.get('date') || '').split(',').map((x) => x.trim()).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x) && x <= t);
+  return l.length ? [...new Set(l)].sort().slice(-31) : [t];
+})();
+const timeSlots = TimeSlots.mount({element: $('#time-slots'), endpoint: '/api/report'});
+const slotSummary = SlotSummary.mount({element: $('#slot-summary'), endpoint: '/api/report'});
+const picker = DatePicker($('#dateBtn'), { max: todayIST, today: todayIST, limit: 31, onApply: (ds) => {
+  $('#date').value = ds[ds.length - 1];
+  try { const u = new URL(location.href); u.searchParams.delete('date'); u.searchParams.delete('dates'); if (!(ds.length === 1 && ds[0] === todayIST())) u.searchParams.set(ds.length === 1 ? 'date' : 'dates', ds.join(',')); history.replaceState(null, '', u); } catch (e) {}
+  load();
+} });
+picker.set(startDates);
+function pickedDates() { const ds = picker.get(); return ds.length ? ds : [$('#date').value || todayIST()]; }
+$('#date').value = startDates[startDates.length - 1];
+$('#refresh').addEventListener('click', load);
+let autoRefreshPromise = null;
+function refreshLive() {
+  if (autoRefreshPromise) return;
+  autoRefreshPromise = load().finally(() => { autoRefreshPromise = null; });
+}
+setInterval(() => {
+  const ds = pickedDates();
+  if (!document.hidden && ds.length === 1 && ds[0] === todayIST()) refreshLive();
+}, REFRESH_MS);
+document.addEventListener('visibilitychange', () => {
+  const ds = pickedDates();
+  if (!document.hidden && ds.length === 1 && ds[0] === todayIST()) refreshLive();
+});
+refreshLive();
+</script>
+</body>
+</html>
