@@ -443,6 +443,8 @@ async function loadCallCounts(data, dates, seq) {
       const result = await response.json();
       if (seq !== loadSeq) return;
       if (!result.ok) throw new Error(result.error || 'Request failed');
+      if (!result.rows.length && data.rows.some(r => (r.date || data.date) === day && r.talk > 0))
+        throw new Error('Call records are unavailable for ' + shortDate(day) + '; the state summary reports talk time.');
       rows.push(...result.rows.map(r=>({...r,date:day})));
     }
     if (seq !== loadSeq) return;

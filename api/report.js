@@ -119,6 +119,8 @@ function callList(calls, agent) {
     .sort((a, b) => String(b.start).localeCompare(String(a.start)));
 }
 
+const reportCalls = require('../lib/report-calls').createReportCallReader({ fetchCalls, savedCalls });
+
 function timeSlots(calls) {
   const periods = [[10, 12], [12, 14], [14, 16], [16, 19]];
   const agents = new Map();
@@ -333,13 +335,7 @@ module.exports = async (req, res) => {
 
   if (url.searchParams.get('view') === 'slots') {
     try {
-      let calls;
-      if (date === now.date && !demo) {
-        try { calls = await fetchCalls(date, now); } catch { calls = await savedCalls(date); }
-      } else {
-        try { calls = await savedCalls(date); } catch { if (demo) throw new Error('Saved call records unavailable'); calls = await fetchCalls(date, now); }
-      }
-      if (!calls.length && !demo) calls = await fetchCalls(date, now);
+      const calls = await reportCalls(date, now, demo);
       return res.status(200).json({ok: true, date, fetchedAt: new Date().toISOString(), rows: timeSlots(calls)});
     } catch (e) {
       return res.status(502).json({ok: false, error: String(e.message || e)});
@@ -348,10 +344,8 @@ module.exports = async (req, res) => {
 
   if (url.searchParams.get('view') === 'call-counts') {
     try {
-      let calls;
-      try { calls = await savedCalls(date); }
-      catch { calls = await fetchCalls(date, now); }
-      res.setHeader('Cache-Control', date < now.date
+      const calls = await reportCalls(date, now, demo);
+      res.setHeader('Cache-Control', !calls.length ? 'no-store' : date < now.date
         ? 'public, s-maxage=3600, stale-while-revalidate=86400, stale-if-error=86400'
         : 'public, s-maxage=35, stale-while-revalidate=120, stale-if-error=300');
       return res.status(200).json({ok: true, date, rows: callCounts(calls)});
@@ -369,12 +363,7 @@ module.exports = async (req, res) => {
   if (url.searchParams.get('view') === 'calls') {
     try {
       const agent = url.searchParams.get('agent') || '';
-      let calls;
-      try { calls = await fetchCalls(date, now); }
-      catch (error) { if (date === now.date) throw error; calls = await savedCalls(date); }
-      if (!calls.length && date < now.date) {
-        try { calls = await savedCalls(date); } catch { /* Keep the Ozonetel result. */ }
-      }
+      const calls = await reportCalls(date, now);
       const rows = callList(calls, agent);
       return res.status(200).json({ ok: true, date, agent, fetchedAt: new Date((cdrCache.get(date) || {}).at || Date.now()).toISOString(), calls: rows });
     } catch (e) {
