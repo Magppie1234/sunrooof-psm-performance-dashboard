@@ -348,7 +348,7 @@ module.exports = async (req, res) => {
       res.setHeader('Cache-Control', !calls.length ? 'no-store' : date < now.date
         ? 'public, s-maxage=3600, stale-while-revalidate=86400, stale-if-error=86400'
         : 'public, s-maxage=35, stale-while-revalidate=120, stale-if-error=300');
-      return res.status(200).json({ok: true, date, rows: callCounts(calls)});
+      return res.status(200).json({ok: true, date, rows: callCounts(calls), slots: timeSlots(calls)});
     } catch (e) {
       return res.status(502).json({ok: false, error: String(e.message || e)});
     }

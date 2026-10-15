@@ -63,10 +63,14 @@
       body.setAttribute('role', 'region');
     }
 
-    async function setSelection(dates, agents, liveRows) {
+    async function setSelection(dates, agents, liveRows, {waitForRows = false, error = ''} = {}) {
       const current = ++requestId;
       const date = dates.at(-1);
       body.textContent = 'Loading time slots…';
+      if (waitForRows && !Array.isArray(liveRows)) {
+        body.textContent = error ? `Time slot data is unavailable: ${error}` : 'Loading time slots with call counts…';
+        return;
+      }
       try {
         let saved = Array.isArray(liveRows) ? {at: Date.now(), rows: liveRows} : cache.get(date);
         if (!saved || Date.now() - saved.at > 30000) {

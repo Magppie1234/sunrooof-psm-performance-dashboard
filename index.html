@@ -427,7 +427,7 @@ let lastData = null;
 function draw(data) {
   const f = applyFilter(data);
   slotSummary.setSelection(pickedDates());
-  timeSlots.setSelection(pickedDates(), knownAgents, data.live ? data.slots : null);
+  timeSlots.setSelection(pickedDates(), knownAgents, data.live ? data.slots : data.callSlots, {waitForRows: !data.live, error: data.countError});
   if (selected && !knownAgents.some((a) => selected.has(a.id))) { $('#kpis').innerHTML = ''; $('#main').innerHTML = '<div class="msg">No agents selected — tick some in the Agents filter.</div>'; $('#summary').innerHTML = ''; return; }
   if (f.live) renderLive(f); else render(f);
 }
@@ -437,18 +437,20 @@ let rateRetry = null;
 async function loadCallCounts(data, dates, seq) {
   if (data.demo || qs.get('demo') === '1') { data.countError = 'Call records are unavailable in sample mode.'; draw(data); return; }
   try {
-    const rows = [];
+    const rows = []; let callSlots;
     for (const day of dates) {
-      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day}));
+      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots'}));
       const result = await response.json();
       if (seq !== loadSeq) return;
       if (!result.ok) throw new Error(result.error || 'Request failed');
       if (!result.rows.length && data.rows.some(r => (r.date || data.date) === day && r.talk > 0))
         throw new Error('Call records are unavailable for ' + shortDate(day) + '; the state summary reports talk time.');
       rows.push(...result.rows.map(r=>({...r,date:day})));
+      callSlots = result.slots;
     }
     if (seq !== loadSeq) return;
     data.callRows = rows;
+    data.callSlots = callSlots;
     draw(data);
   } catch (e) {
     if (seq !== loadSeq) return;
