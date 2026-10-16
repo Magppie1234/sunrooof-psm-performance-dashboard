@@ -19,8 +19,22 @@ test('recent CDRs take precedence over a partial saved day', async () => {
 test('saved history is used when CDRs fail or return no records', async () => {
   for (const fetchCalls of [async () => { throw Error('rate limited'); }, async () => []]) {
     const read = createReportCallReader({ fetchCalls, savedCalls: async () => ['saved'] });
-    assert.deepEqual(await read('2026-10-14', now), ['saved']);
+    const calls = await read('2026-10-14', now);
+    assert.deepEqual(calls, ['saved']);
+    assert.equal(calls.archiveFallback, true);
   }
+});
+
+test('a recent partial fallback is retried against CDRs on the next request', async () => {
+  let reads = 0;
+  const read = createReportCallReader({fetchCalls: async () => {
+    if (++reads === 1) throw Error('rate limited');
+    return ['first', 'second'];
+  }, savedCalls: async () => ['first']});
+  assert.equal((await read('2026-10-14', now)).archiveFallback, true);
+  const complete = await read('2026-10-14', now);
+  assert.deepEqual(complete, ['first','second']);
+  assert.equal(complete.archiveFallback, undefined);
 });
 
 test('old archived dates avoid the limited-retention CDR endpoint', async () => {

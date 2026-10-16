@@ -349,10 +349,11 @@ module.exports = async (req, res) => {
   if (url.searchParams.get('view') === 'call-counts') {
     try {
       const calls = await reportCalls(date, now, demo);
-      res.setHeader('Cache-Control', !calls.length ? 'no-store' : date < now.date
+      res.setHeader('Cache-Control', !calls.length || calls.archiveFallback ? 'no-store' : date < now.date
         ? 'public, s-maxage=3600, stale-while-revalidate=86400, stale-if-error=86400'
         : 'public, s-maxage=35, stale-while-revalidate=120, stale-if-error=300');
-      return res.status(200).json({ok: true, date, rows: callCounts(calls), slots: timeSlots(calls)});
+      return res.status(200).json({ok: true, date, rows: callCounts(calls), slots: timeSlots(calls),
+        ...(calls.archiveFallback ? {archiveFallback: true, warning: 'Showing saved call records while Ozonetel is unavailable; this recent archive may be incomplete.'} : {})});
     } catch (e) {
       return res.status(502).json({ok: false, error: String(e.message || e)});
     }
@@ -369,7 +370,8 @@ module.exports = async (req, res) => {
       const agent = url.searchParams.get('agent') || '';
       const calls = await reportCalls(date, now);
       const rows = callList(calls, agent);
-      return res.status(200).json({ ok: true, date, agent, fetchedAt: new Date((cdrCache.get(date) || {}).at || Date.now()).toISOString(), calls: rows });
+      return res.status(200).json({ ok: true, date, agent, fetchedAt: new Date((cdrCache.get(date) || {}).at || Date.now()).toISOString(), calls: rows,
+        ...(calls.archiveFallback ? {archiveFallback: true, warning: 'Saved call records may be incomplete; retry when Ozonetel is available.'} : {}) });
     } catch (e) {
       return res.status(502).json({ ok: false, error: String(e.message || e) });
     }

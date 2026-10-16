@@ -229,6 +229,7 @@ function render(data) {
   const t = grand.tot;
   s += `<tr class="grand"><td style="text-align:left">Total</td><td>${hms(t.login)}</td><td>100.0%</td><td>${hms(t.talk)}</td><td>${count(t.calls)}</td><td>${hms(t.idle)}</td><td>${count(t.connected)}</td><td>${hms(t.wrapup)}</td><td>${hms(t.pause)}</td></tr></tbody></table></div></div>`;
   if (!data.callRows) s += `<div class="note">${data.countError ? 'Call counts are temporarily unavailable: ' + esc(data.countError) : 'Loading call counts…'}</div>`;
+  if (data.countWarning) s += `<div class="note">${esc(data.countWarning)} Retrying in about a minute.</div>`;
   $('#summary').innerHTML = s;
 }
 
@@ -322,7 +323,7 @@ $('#selAll').addEventListener('click', () => { selected = null; saveFilter(); dr
 $('#selNone').addEventListener('click', () => { selected = new Set(); saveFilter(); drawFilter(); if (lastData) draw(lastData); });
 
 // ---- Per-agent call list
-let callRows = [], callAgent = null;
+let callRows = [], callAgent = null, callWarning = '';
 // Possible voicemail / auto-answer: rang a while, "answered", then only a few seconds of talk (either side may end it).
 const VM = { minRing: 0, maxTalk: 17 };
 const isVm = (c) => c.status === 'Answered' && c.talk > 0 && c.talk <= VM.maxTalk && c.ring >= VM.minRing;
@@ -333,6 +334,7 @@ async function openCalls(id, name) {
   $('#dlgTitle').textContent = `${name} (${id})`;
   $('#dlgMeta').textContent = 'Loading calls…';
   $('#dlgBody').innerHTML = '';
+  callWarning = '';
   try {
     const days = pickedDates().slice().reverse(), all = [];
     for (const [i, day] of days.entries()) {
@@ -340,6 +342,7 @@ async function openCalls(id, name) {
       const r = await fetch(`/api/report?view=calls&date=${encodeURIComponent(day)}&agent=${encodeURIComponent(id)}`);
       const d = await r.json();
       if (!d.ok) throw new Error(d.error || 'Request failed');
+      if (d.warning) callWarning = d.warning;
       (d.calls || []).forEach((c) => all.push({ ...c, date: day }));
     }
     callRows = all;
@@ -361,7 +364,7 @@ function drawCalls() {
   const nvm = counted.filter(c => c.attempts.some(isVm)).length;
   const talk = list.reduce((s, c) => s + c.talk, 0), nc = counted.filter(c => c.connected).length;
   const multiDay = pickedDates().length > 1;
-  $('#dlgMeta').textContent = `${multiDay ? datesLabel(pickedDates()) : fmtDate($('#date').value)} · ${counted.length} calls · ${list.length} attempt rows · ${nc} connected (${pct(nc, counted.length)}) · talk time ${hms(talk)} · avg ${hms(nc ? talk / nc : 0)} · ${nvm} possible voicemail`;
+  $('#dlgMeta').textContent = `${multiDay ? datesLabel(pickedDates()) : fmtDate($('#date').value)} · ${counted.length} calls · ${list.length} attempt rows · ${nc} connected (${pct(nc, counted.length)}) · talk time ${hms(talk)} · avg ${hms(nc ? talk / nc : 0)} · ${nvm} possible voicemail${callWarning ? ' · ' + callWarning : ''}`;
   if (!list.length) { $('#dlgBody').innerHTML = '<div class="msg">No calls for this selection.</div>'; return; }
   const head = (multiDay ? ['Date'] : []).concat(['Start', 'Mode', 'Number', 'Campaign / Skill', 'Status', 'Ring', 'Talk', 'Wrap-up', 'Hold', 'Hung up by', 'Disposition', 'Call ID']);
   $('#dlgBody').innerHTML = '<div class="scroll"><table><thead><tr>' + head.map((h) => `<th class="h">${h}</th>`).join('') + '</tr></thead><tbody>' +
@@ -441,12 +444,13 @@ let rateRetry = null;
 async function loadCallCounts(data, dates, seq) {
   if (data.demo || qs.get('demo') === '1') { data.countError = 'Call records are unavailable in sample mode.'; draw(data); return; }
   try {
-    const rows = []; let callSlots;
+    const rows = []; let callSlots, countWarning = '';
     for (const day of dates) {
-      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots', counting: 'unique-inbound-v1'}));
+      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots', counting: 'unique-inbound-v2'}));
       const result = await response.json();
       if (seq !== loadSeq) return;
       if (!result.ok) throw new Error(result.error || 'Request failed');
+      if (result.archiveFallback) countWarning = result.warning;
       if (!result.rows.length && data.rows.some(r => (r.date || data.date) === day && r.talk > 0))
         throw new Error('Call records are unavailable for ' + shortDate(day) + '; the state summary reports talk time.');
       rows.push(...result.rows.map(r=>({...r,date:day})));
@@ -455,7 +459,10 @@ async function loadCallCounts(data, dates, seq) {
     if (seq !== loadSeq) return;
     data.callRows = rows;
     data.callSlots = callSlots;
+    data.countWarning = countWarning;
+    delete data.countError;
     draw(data);
+    if (countWarning) rateRetry = setTimeout(() => { if (seq === loadSeq) loadCallCounts(data, dates, seq); }, 65000);
   } catch (e) {
     if (seq !== loadSeq) return;
     data.countError = String(e.message || e);

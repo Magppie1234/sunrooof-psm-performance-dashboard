@@ -112,7 +112,7 @@ test('detail view shows unique totals and retains retries when filtering connect
     callId:c.CallID, agentId:c.AgentID, date:'2026-10-14', mode:c.Type, start:c.StartTime,
     status:c.Status, talk:metrics.group([c])[0].talk, ring:0, wrapup:0, hold:0,
   }));
-  const context = vm.createContext({CallMetrics:metrics, callRows, $:selector=>elements[selector],
+  const context = vm.createContext({CallMetrics:metrics, callRows, callWarning:'', $:selector=>elements[selector],
     titleCase:x=>x, pickedDates:()=>['2026-10-14'], fmtDate:x=>x, pct:(n,d)=>(100*n/d).toFixed(1)+'%',
     hms:x=>x, esc:x=>String(x??''), isVm:()=>false, modeCls:()=>'', VM:{maxTalk:17}});
   vm.runInContext(source+'\ndrawCalls();',context);
@@ -122,4 +122,18 @@ test('detail view shows unique totals and retains retries when filtering connect
   vm.runInContext('drawCalls()',context);
   assert.match(elements['#dlgMeta'].textContent, /8 calls · 10 attempt rows · 8 connected \(100.0%\)/);
   assert.equal((elements['#dlgBody'].innerHTML.match(/<tr>/g)||[]).length-1,10);
+});
+
+test('partial recent archives are not cached as complete historical totals', async () => {
+  const calls = [attempt('one')];
+  Object.defineProperty(calls, 'archiveFallback', {value:true});
+  const handler = api(calls), headers = {};
+  let body;
+  await handler({url:'/api/report?view=call-counts&date=2026-10-14'}, {
+    setHeader(name,value) {headers[name]=value;},
+    status(code) {assert.equal(code,200);return this;}, json(value) {body=value;},
+  });
+  assert.equal(headers['Cache-Control'],'no-store');
+  assert.equal(body.archiveFallback,true);
+  assert.match(body.warning,/incomplete/);
 });
