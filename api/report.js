@@ -1,3 +1,4 @@
+const CallMetrics = require('../call-metrics');
 // Serverless proxy: fetches Ozonetel CloudAgent "Agent State Summary" for one day
 // and returns normalised rows. The API key never reaches the browser.
 function endpoint() {
@@ -55,7 +56,7 @@ function oz(method, path, body) {
       const rq = require('https').request({ hostname: u.hostname, path: u.pathname, method,
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (rs) => {
         let b = ''; rs.on('data', (c) => (b += c));
-        rs.on('end', () => { let j; try { j = JSON.parse(b); } catch { j = { status: 'error', message: b.slice(0, 200) }; } done({ http: rs.statusCode, j }); });
+        rs.on('end', () => { let j; try { j = CallMetrics.parseJson(b); } catch { j = { status: 'error', message: b.slice(0, 200) }; } done({ http: rs.statusCode, j }); });
       });
       rq.on('error', (e) => done({ http: 0, j: { status: 'error', message: e.message } }));
       rq.write(data); rq.end();
@@ -79,11 +80,12 @@ async function savedCalls(date) {
   const month = date.slice(0, 7);
   const r = await fetch(`https://sunrooof-agent-calls-20260923.vercel.app/api/calls?month=${month}&date=none`);
   if (!r.ok) throw new Error('Saved call records unavailable');
-  const data = await r.json();
+  const data = CallMetrics.parseJson(await r.text());
   if (!Array.isArray(data.records)) throw new Error('Saved call records incomplete');
   const calls = data.records.filter(c => c['Call Date'] === date).map(c => ({
     AgentID: c['Agent ID'], AgentName: c.Agent, StartTime: c['Start Time'],
     TalkTime: c['Talk Time'], Status: c.Status, Type: c['Call Type'],
+    CallID: CallMetrics.callId(c), UCID: CallMetrics.attemptId(c), CallDate: date,
   }));
   savedCallCache.set(date, {at: Date.now(), calls});
   return calls;
@@ -110,6 +112,7 @@ function callList(calls, agent) {
     .filter((c) => !agent || c.AgentID === agent || c.AgentName === agent)
     .map((c) => ({
       agentId: c.AgentID || c.AgentName || '', agentName: c.AgentName || c.AgentID || '',
+      callId: CallMetrics.callId(c), ucid: CallMetrics.attemptId(c),
       start: c.StartTime, end: c.EndTime, mode: String(c.Type || ''), number: c.CallerID || c.E164 || '', agentPhone: c.DialedNumber || '',
       campaign: c.CampaignName || '', skill: c.Skill || '', status: c.Status || '', disposition: c.Disposition || '',
       talk: toSec(c.TalkTime), ring: toSec(c.CustomerRingTime), duration: toSec(c.Duration),
@@ -124,19 +127,20 @@ const reportCalls = require('../lib/report-calls').createReportCallReader({ fetc
 function timeSlots(calls) {
   const periods = [[10, 12], [12, 14], [14, 16], [16, 19]];
   const agents = new Map();
-  for (const c of calls) {
-    const id = c.AgentID || c.AgentName;
-    if (!id || !/^\d{2}:\d{2}:\d{2}$/.test(String(c.StartTime || ''))) continue;
-    const hour = Number(c.StartTime.slice(0, 2));
+  for (const c of CallMetrics.group(calls)) {
+    const id = c.agentId;
+    const time = String(c.start || '').slice(-8);
+    if (!id || !/^\d{2}:\d{2}:\d{2}$/.test(time)) continue;
+    const hour = Number(time.slice(0, 2));
     const slot = periods.findIndex(([start, end]) => hour >= start && hour < end);
     if (slot < 0) continue;
-    if (!agents.has(id)) agents.set(id, {agentId: id, agentName: c.AgentName || id,
+    if (!agents.has(id)) agents.set(id, {agentId: id, agentName: c.agentName || id,
       slots: periods.map(() => ({calls: 0, connected: 0, talk: 0, boards: {}}))});
     const cell = agents.get(id).slots[slot];
-    const talk = toSec(c.TalkTime);
-    const mode = String(c.Type || '').toLowerCase();
+    const talk = c.talk;
+    const mode = String(c.mode || '').toLowerCase();
     const board = mode === 'progressive' ? 'Progressive' : mode === 'manual' ? 'Manual' : mode === 'inbound' ? 'Inbound' : 'Other';
-    const connected = c.Status === 'Answered' && talk > 0 ? 1 : 0;
+    const connected = c.connected ? 1 : 0;
     cell.calls++;
     cell.connected += connected;
     cell.talk += talk;
@@ -150,14 +154,14 @@ function timeSlots(calls) {
 
 function callCounts(calls) {
   const groups = new Map();
-  for (const c of calls) {
-    const agentId = c.AgentID || c.AgentName;
+  for (const c of CallMetrics.group(calls)) {
+    const agentId = c.agentId;
     if (!agentId) continue;
-    const mode = String(c.Type || 'Unknown');
+    const mode = String(c.mode || 'Unknown');
     const key = JSON.stringify([agentId, mode]);
-    const row = groups.get(key) || {agentId, agentName: c.AgentName || agentId, mode, calls: 0, connected: 0};
+    const row = groups.get(key) || {agentId, agentName: c.agentName || agentId, mode, calls: 0, connected: 0};
     row.calls++;
-    if (c.Status === 'Answered' && toSec(c.TalkTime) > 0) row.connected++;
+    if (c.connected) row.connected++;
     groups.set(key, row);
   }
   return [...groups.values()];
@@ -168,16 +172,16 @@ async function liveData(date, now) {
   const calls = await fetchCalls(date, now);
   const rows = {}, names = {};
   let unassigned = 0, unassignedMissed = 0;
-  for (const c of calls) {
-    if (!c.AgentID && !c.AgentName) { unassigned++; if (c.Status !== 'Answered') unassignedMissed++; continue; }
-    const id = c.AgentID || c.AgentName; names[id] = c.AgentName || id;
-    const mode = String(c.Type || 'Unknown');
+  for (const c of CallMetrics.group(calls)) {
+    if (!c.agentId) { unassigned++; if (!c.connected) unassignedMissed++; continue; }
+    const id = c.agentId; names[id] = c.agentName || id;
+    const mode = String(c.mode || 'Unknown');
     const k = id + '|' + mode;
     const r = rows[k] || (rows[k] = { agentId: id, agentName: names[id], mode, calls: 0, connected: 0, talk: 0, wrapup: 0, lastCall: '' });
     r.calls++;
-    if (c.Status === 'Answered' && toSec(c.TalkTime) > 0) r.connected++;
-    r.talk += toSec(c.TalkTime); r.wrapup += toSec(c.WrapupDuration);
-    if ((c.StartTime || '') > r.lastCall) r.lastCall = c.StartTime;
+    if (c.connected) r.connected++;
+    r.talk += c.talk; r.wrapup += c.wrapup;
+    if (c.lastStart > r.lastCall) r.lastCall = c.lastStart;
   }
   const ids = [...new Set([...Object.keys(names), ...String(process.env.OZONETEL_AGENT_IDS || '').split(',').map((x) => x.trim()).filter(Boolean)])];
   // AgentDetails takes one agent per call and allows 10 calls/min: refresh up to 4 of the stalest agents every 25 s.
@@ -193,7 +197,7 @@ async function liveData(date, now) {
     }
   }
   const state = ids.filter((id) => sm[id]).map((id) => ({ ...sm[id], checkedSecsAgo: Math.round((Date.now() - sm[id].at) / 1000) }));
-  return { rows: Object.values(rows), status: state, slots: timeSlots(calls), unassigned, unassignedMissed, totalCalls: calls.length };
+  return { rows: Object.values(rows), status: state, slots: timeSlots(calls), unassigned, unassignedMissed, totalCalls: CallMetrics.group(calls).length };
 }
 
 

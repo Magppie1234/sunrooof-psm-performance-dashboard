@@ -14,6 +14,7 @@ test('daily counts and time slots come from the same call records in one respons
     module, URL, Date, Map, Set, Buffer,
     process: { env: { OZONETEL_API_KEY: 'test', OZONETEL_USERNAME: 'test' } },
     require: path => {
+      if (path === '../call-metrics') return require('../call-metrics');
       assert.equal(path, '../lib/report-calls');
       return { createReportCallReader: () => async () => { reads++; return calls; } };
     },

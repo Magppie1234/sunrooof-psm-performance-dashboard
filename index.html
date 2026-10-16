@@ -135,6 +135,7 @@ tr.vmrow td{background:#fffaf0}
   <div class="body" id="dlgBody"></div>
 </div></div>
 </div>
+<script src="/call-metrics.js"></script>
 <script src="/datepicker.js"></script>
 <script src="/slot-summary.js"></script>
 <script src="/time-slots.js"></script>
@@ -353,24 +354,27 @@ async function openCalls(id, name) {
 function drawCalls() {
   const fm = $('#dlgMode').value, fs = $('#dlgStatus').value;
   const conn = (c) => c.status === 'Answered' && c.talk > 0;
-  const list = callRows.filter((c) => (!fm || titleCase(c.mode) === fm) && (!fs || (fs === 'vm' ? isVm(c) : fs === 'conn' ? conn(c) : !conn(c))));
-  const nvm = list.filter(isVm).length;
-  const talk = list.reduce((s, c) => s + c.talk, 0), nc = list.filter(conn).length;
+  const counted = CallMetrics.group(callRows.filter(c => !fm || titleCase(c.mode) === fm))
+    .filter(c => !fs || (fs === 'vm' ? c.attempts.some(isVm) : fs === 'conn' ? c.connected : !c.connected));
+  const included = new Set(counted.flatMap(c => c.attempts));
+  const list = callRows.filter(c => included.has(c));
+  const nvm = counted.filter(c => c.attempts.some(isVm)).length;
+  const talk = list.reduce((s, c) => s + c.talk, 0), nc = counted.filter(c => c.connected).length;
   const multiDay = pickedDates().length > 1;
-  $('#dlgMeta').textContent = `${multiDay ? datesLabel(pickedDates()) : fmtDate($('#date').value)} · ${list.length} calls · ${nc} connected (${pct(nc, list.length)}) · talk time ${hms(talk)} · avg ${hms(nc ? talk / nc : 0)} · ${nvm} possible voicemail`;
+  $('#dlgMeta').textContent = `${multiDay ? datesLabel(pickedDates()) : fmtDate($('#date').value)} · ${counted.length} calls · ${list.length} attempt rows · ${nc} connected (${pct(nc, counted.length)}) · talk time ${hms(talk)} · avg ${hms(nc ? talk / nc : 0)} · ${nvm} possible voicemail`;
   if (!list.length) { $('#dlgBody').innerHTML = '<div class="msg">No calls for this selection.</div>'; return; }
-  const head = (multiDay ? ['Date'] : []).concat(['Start', 'Mode', 'Number', 'Campaign / Skill', 'Status', 'Ring', 'Talk', 'Wrap-up', 'Hold', 'Hung up by', 'Disposition']);
+  const head = (multiDay ? ['Date'] : []).concat(['Start', 'Mode', 'Number', 'Campaign / Skill', 'Status', 'Ring', 'Talk', 'Wrap-up', 'Hold', 'Hung up by', 'Disposition', 'Call ID']);
   $('#dlgBody').innerHTML = '<div class="scroll"><table><thead><tr>' + head.map((h) => `<th class="h">${h}</th>`).join('') + '</tr></thead><tbody>' +
     list.map((c) => `<tr${isVm(c) ? ' class="vmrow"' : ''}>${multiDay ? `<td>${esc(shortDate(c.date))}</td>` : ''}<td>${esc(c.start || '')}</td><td><span class="pill ${modeCls(c.mode)}">${esc(titleCase(c.mode))}</span></td>` +
       `<td>${esc(c.number)}${c.recording ? ` <a href="${esc(c.recording)}" target="_blank" rel="noopener">▶</a>` : ''}</td>` +
       `<td class="l">${esc(c.campaign)}${c.skill ? ' · ' + esc(c.skill) : ''}</td>` +
       `<td class="${conn(c) ? 'ok' : 'no'}">${esc(conn(c) ? 'Connected' : c.status || 'Unanswered')}${isVm(c) ? '<span class="vm" title="Answered, but only ' + VM.maxTalk + ' s or less of talk — play the recording to confirm">Possible voicemail</span>' : ''}</td>` +
       `<td>${hms(c.ring)}</td><td>${hms(c.talk)}</td><td>${hms(c.wrapup)}</td><td>${hms(c.hold)}</td>` +
-      `<td>${esc(c.hangupBy)}</td><td class="l">${esc(c.disposition)}</td></tr>`).join('') + '</tbody></table></div>';
+      `<td>${esc(c.hangupBy)}</td><td class="l">${esc(c.disposition)}</td><td>${esc(c.callId || 'Unavailable')}</td></tr>`).join('') + '</tbody></table></div>';
 }
 function callsCsv() {
-  const head = ['Date', 'Start', 'End', 'Mode', 'Number', 'Campaign', 'Skill', 'Status', 'PossibleVoicemail', 'RingSecs', 'Talk time (minutes)', 'Wrap-up time (minutes)', 'HoldSecs', 'HangupBy', 'Disposition'];
-  const rows = callRows.map((c) => [c.date, c.start, c.end, titleCase(c.mode), c.number, c.campaign, c.skill, c.status, isVm(c) ? 'Yes' : '', c.ring, minutes(c.talk), minutes(c.wrapup), c.hold, c.hangupBy, c.disposition]);
+  const head = ['Date', 'Start', 'End', 'Mode', 'Number', 'Campaign', 'Skill', 'Status', 'PossibleVoicemail', 'RingSecs', 'Talk time (minutes)', 'Wrap-up time (minutes)', 'HoldSecs', 'HangupBy', 'Disposition', 'Call ID', 'Attempt ID (UCID)'];
+  const rows = callRows.map((c) => [c.date, c.start, c.end, titleCase(c.mode), c.number, c.campaign, c.skill, c.status, isVm(c) ? 'Yes' : '', c.ring, minutes(c.talk), minutes(c.wrapup), c.hold, c.hangupBy, c.disposition, c.callId, c.ucid]);
   const pd = pickedDates();
   saveCsv(`calls_${callAgent ? callAgent.id : 'agent'}_${pd[0]}${pd.length > 1 ? '_to_' + pd[pd.length - 1] : ''}.csv`,head,rows);
 }
@@ -405,8 +409,8 @@ $('#allCallsCsv').addEventListener('click',async()=>{
       for(const c of data.calls||[])if(!selectedIds||selectedIds.has(c.agentId))all.push({...c,date});
     }
     if(!all.length){$('#status').textContent='No call records to download for this selection.';return}
-    const head=['Date','Agent ID','Agent name','Start','End','Mode','Number','Campaign','Skill','Status','Ring seconds','Talk time (minutes)','Wrap-up time (minutes)','Hold seconds','Duration seconds','Hung up by','Disposition','Customer status','Recording URL'];
-    saveCsv('agent-productivity-raw-calls-'+suffix+'.csv',head,all.map(c=>[c.date,c.agentId,c.agentName,c.start,c.end,c.mode,c.number,c.campaign,c.skill,c.status,c.ring,minutes(c.talk),minutes(c.wrapup),c.hold,c.duration,c.hangupBy,c.disposition,c.customerStatus,c.recording]));
+    const head=['Date','Agent ID','Agent name','Start','End','Mode','Number','Campaign','Skill','Status','Ring seconds','Talk time (minutes)','Wrap-up time (minutes)','Hold seconds','Duration seconds','Hung up by','Disposition','Customer status','Recording URL','Call ID','Attempt ID (UCID)'];
+    saveCsv('agent-productivity-raw-calls-'+suffix+'.csv',head,all.map(c=>[c.date,c.agentId,c.agentName,c.start,c.end,c.mode,c.number,c.campaign,c.skill,c.status,c.ring,minutes(c.talk),minutes(c.wrapup),c.hold,c.duration,c.hangupBy,c.disposition,c.customerStatus,c.recording,c.callId,c.ucid]));
   }catch(error){$('#status').textContent='CSV download failed: '+String(error.message||error)}
   finally{button.disabled=false;button.textContent='Download raw calls CSV'}
 });
@@ -439,7 +443,7 @@ async function loadCallCounts(data, dates, seq) {
   try {
     const rows = []; let callSlots;
     for (const day of dates) {
-      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots'}));
+      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots', counting: 'unique-inbound-v1'}));
       const result = await response.json();
       if (seq !== loadSeq) return;
       if (!result.ok) throw new Error(result.error || 'Request failed');
@@ -497,7 +501,7 @@ async function load() {
   if (!lastData || lastData.date !== d) $('#status').innerHTML = 'Loading…';
   try {
     const isLive = d === todayIST() && qs.get('demo') !== '1';
-    const p = new URLSearchParams({ date: d }); if (qs.get('demo') === '1') p.set('demo', '1'); if (isLive) p.set('view', 'live');
+    const p = new URLSearchParams({ date: d }); if (qs.get('demo') === '1') p.set('demo', '1'); if (isLive) { p.set('view', 'live'); p.set('counting', 'unique-inbound-v1'); }
     const r = await fetch('/api/report?' + p);
     const data = await r.json();
     if (seq !== loadSeq) return;
