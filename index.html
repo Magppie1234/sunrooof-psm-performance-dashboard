@@ -234,7 +234,7 @@ function render(data) {
 }
 
 
-function stClass(st) { st = String(st || '').toUpperCase(); if (/READY/.test(st) && !/NOT/.test(st)) return 'ready'; if (/BUSY|CALL|TALK|DIAL/.test(st)) return 'busy'; if (/ACW|WRAP/.test(st)) return 'acw'; if (/PAUSE|BREAK|NOT/.test(st)) return 'pause'; return 'out'; }
+function stClass(st) { st = String(st || '').toUpperCase(); if (/READY/.test(st) && !/NOT/.test(st)) return 'ready'; if (/BUSY|CALL|TALK|DIAL/.test(st)) return 'busy'; if (/ACW|WRAP/.test(st)) return 'acw'; if (/PAUSE|BREAK|NOT|AUX/.test(st)) return 'pause'; return 'out'; }
 function renderLive(data) {
   $('#dateTitle').textContent = fmtDate(data.date) + ' (Live)';
   const agents = new Map(), modeSet = new Set();
@@ -254,9 +254,9 @@ function renderLive(data) {
   const g = { modes: Object.fromEntries(modes.map((m) => [m, z()])), tot: z() };
   for (const a of list) for (const m of modes) { const s = a.modes[m]; if (s) for (const f in s) { g.modes[m][f] += s[f]; g.tot[f] += s[f]; } }
   const onBreak = (data.status || []).filter((s) => stClass(s.state) === 'pause').length;
-  const active = (data.status || []).filter((s) => stClass(s.state) !== 'out').length;
-  const k = [['Agents Logged In', data.status && data.status.length ? active : list.length], ['Total Calls', g.tot.calls], ['Connected', g.tot.connected],
-    ['Total Talk Time', hms(g.tot.talk)], ['Connect Rate', pct(g.tot.connected, g.tot.calls)], ['On Break Now', data.status && data.status.length ? onBreak : '—']];
+  const active = (data.status || []).filter(s => s.loggedIn === true).length;
+  const k = [['Agents Logged In', data.statusComplete === true ? active : '—'], ['Total Calls', g.tot.calls], ['Connected', g.tot.connected],
+    ['Total Talk Time', hms(g.tot.talk)], ['Connect Rate', pct(g.tot.connected, g.tot.calls)], ['On Break Now', data.statusComplete === true ? onBreak : '—']];
   $('#kpis').innerHTML = k.map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
   if (!list.length) { $('#main').innerHTML = '<div class="msg">No calls yet today.</div>'; $('#summary').innerHTML = ''; return; }
   const cells = (s, c) => { s = s || z(); return `<td class="b-${c}">${s.calls}</td><td class="b-${c}">${s.connected}</td><td class="b-${c}">${hms(s.talk)}</td>`; };
@@ -268,7 +268,7 @@ function renderLive(data) {
   for (const a of list) {
     const s = st.get(a.id);
     h += `<tr><td class="id">${esc(a.id)}</td><td class="nm">${esc(a.name)}</td>`;
-    h += s ? `<td><span class="st ${stClass(s.state)}">${esc(s.state)}</span></td><td class="since">${esc(s.mode || '')} · ${esc(s.since || '')}</td>` : '<td><span class="st out">—</span></td><td class="since"></td>';
+    h += s ? `<td><span class="st ${stClass(s.state)}">${esc(s.state)}${s.stale ? " (last known)" : ""}</span></td><td class="since">${esc(s.mode || '')} · ${esc(s.since || '')}</td>` : '<td><span class="st out">—</span></td><td class="since"></td>';
     modes.forEach((m) => h += cells(a.modes[m], cls(m)));
     h += `<td class="b-tot bold">${a.tot.calls}</td><td class="b-tot bold">${a.tot.connected}</td><td class="b-tot bold">${hms(a.tot.talk)}</td><td class="b-tot">${hms(a.tot.connected ? a.tot.talk / a.tot.connected : 0)}</td><td class="b-tot">${esc(a.last || '—')}</td></tr>`;
   }
@@ -323,12 +323,13 @@ $('#selAll').addEventListener('click', () => { selected = null; saveFilter(); dr
 $('#selNone').addEventListener('click', () => { selected = new Set(); saveFilter(); drawFilter(); if (lastData) draw(lastData); });
 
 // ---- Per-agent call list
-let callRows = [], callAgent = null, callWarning = '';
+let callRows = [], callAgent = null, callWarning = '', callRequest=0, callRetry=null;
 // Possible voicemail / auto-answer: rang a while, "answered", then only a few seconds of talk (either side may end it).
 const VM = { minRing: 0, maxTalk: 17 };
 const isVm = (c) => c.status === 'Answered' && c.talk > 0 && c.talk <= VM.maxTalk && c.ring >= VM.minRing;
 const modeCls = (m) => ({ inbound: 'inb', manual: 'man', progressive: 'prog' })[String(m).toLowerCase()] || 'oth';
 async function openCalls(id, name) {
+  const request=++callRequest,selection=JSON.stringify(pickedDates());clearTimeout(callRetry);
   callAgent = { id, name };
   $('#ovl').classList.remove('hide');
   $('#dlgTitle').textContent = `${name} (${id})`;
@@ -341,7 +342,8 @@ async function openCalls(id, name) {
       if (days.length > 1) $('#dlgMeta').textContent = `Loading calls — day ${i + 1} of ${days.length}…`;
       const r = await fetch(`/api/report?view=calls&date=${encodeURIComponent(day)}&agent=${encodeURIComponent(id)}`);
       const d = await r.json();
-      if (!d.ok) throw new Error(d.error || 'Request failed');
+      if(request!==callRequest)return;
+      if (!d.ok) throw reportError(d);
       if (d.warning) callWarning = d.warning;
       (d.calls || []).forEach((c) => all.push({ ...c, date: day }));
     }
@@ -350,6 +352,8 @@ async function openCalls(id, name) {
     $('#dlgMode').innerHTML = '<option value="">All modes</option>' + modes.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
     drawCalls();
   } catch (e) {
+    if(request!==callRequest)return;
+    if(e.pending){$('#dlgMeta').textContent='Collecting call records; retrying automatically…';callRetry=setTimeout(()=>{if(request===callRequest&&!document.hidden&&selection===JSON.stringify(pickedDates()))openCalls(id,name);},60000);return;}
     $('#dlgMeta').textContent = '';
     $('#dlgBody').innerHTML = `<div class="msg">Couldn't load calls: ${esc(e.message)}</div>`;
   }
@@ -408,7 +412,7 @@ $('#allCallsCsv').addEventListener('click',async()=>{
     for(const date of dates){
       const response=await fetch('/api/report?'+new URLSearchParams({view:'calls',date}),{cache:'no-store'});
       const data=await response.json();
-      if(!response.ok||!data.ok)throw Error(`${date}: ${data.error||'Could not load call records'}`);
+      if(!response.ok||!data.ok)throw Error(`${date}: ${data.message||data.error||'Could not load call records'}`);
       for(const c of data.calls||[])if(!selectedIds||selectedIds.has(c.agentId))all.push({...c,date});
     }
     if(!all.length){$('#status').textContent='No call records to download for this selection.';return}
@@ -417,7 +421,7 @@ $('#allCallsCsv').addEventListener('click',async()=>{
   }catch(error){$('#status').textContent='CSV download failed: '+String(error.message||error)}
   finally{button.disabled=false;button.textContent='Download raw calls CSV'}
 });
-function closeCalls() { $('#ovl').classList.add('hide'); }
+function closeCalls() { ++callRequest;clearTimeout(callRetry);$('#ovl').classList.add('hide'); }
 $('#dlgClose').addEventListener('click', closeCalls);
 $('#dlgCsv').addEventListener('click', callsCsv);
 $('#dlgMode').addEventListener('change', drawCalls);
@@ -441,6 +445,22 @@ function draw(data) {
 
 let loadSeq = 0;
 let rateRetry = null;
+let pendingDelay = 30000;
+function reportError(data){
+  const error=new Error(data.message||data.error||'Request failed');
+  error.pending=!!data.pending;return error;
+}
+function retryPending(seq,action=load){
+  clearTimeout(rateRetry);
+  const delay=pendingDelay;pendingDelay=Math.min(120000,pendingDelay*2);
+  rateRetry=setTimeout(()=>{if(seq===loadSeq&&!document.hidden)action();},delay);
+}
+function showPending(error,seq){
+  if(!error.pending)return false;
+  $('#status').textContent='Collecting this report. It will refresh automatically.';
+  if(!$('#main table'))$('#main').innerHTML='<div class="msg">Collecting report data…</div>';
+  retryPending(seq);return true;
+}
 async function loadCallCounts(data, dates, seq) {
   if (data.demo || qs.get('demo') === '1') { data.countError = 'Call records are unavailable in sample mode.'; draw(data); return; }
   try {
@@ -449,8 +469,8 @@ async function loadCallCounts(data, dates, seq) {
       const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots', counting: 'unique-inbound-v2'}));
       const result = await response.json();
       if (seq !== loadSeq) return;
-      if (!result.ok) throw new Error(result.error || 'Request failed');
-      if (result.archiveFallback) countWarning = result.warning;
+      if (!result.ok) throw reportError(result);
+      if (result.archiveFallback || result.sharedIntegration?.pending) countWarning = result.warning || 'Refreshing call records…';
       if (!result.rows.length && data.rows.some(r => (r.date || data.date) === day && r.talk > 0))
         throw new Error('Call records are unavailable for ' + shortDate(day) + '; the state summary reports talk time.');
       rows.push(...result.rows.map(r=>({...r,date:day})));
@@ -467,10 +487,12 @@ async function loadCallCounts(data, dates, seq) {
     if (seq !== loadSeq) return;
     data.countError = String(e.message || e);
     draw(data);
+    if(e.pending)retryPending(seq,()=>loadCallCounts(data,dates,seq));
   }
 }
 async function loadMany(dates) {
   const seq = ++loadSeq, rows = [], empty = [];
+  let stale=false;
   let fetchedAt = new Date().toISOString();
   try {
     for (const [i, d] of dates.entries()) {
@@ -479,21 +501,24 @@ async function loadMany(dates) {
       const r = await fetch('/api/report?' + p);
       const data = await r.json();
       if (seq !== loadSeq) return;
-      if (!data.ok) throw new Error(`${shortDate(d)}: ${data.error || 'Request failed'}`);
+      if (!data.ok) throw reportError(data);
+      stale ||= !!data.stale || !!data.sharedIntegration?.pending;
       if (data.fetchedAt && data.fetchedAt < fetchedAt) fetchedAt = data.fetchedAt;
       if (!(data.rows || []).length) empty.push(d);
       (data.rows || []).forEach((row) => rows.push({ ...row, date: d }));
     }
-    lastData = { ok: true, date: dates[dates.length - 1], dates, rows, fetchedAt };
+    lastData = { ok: true, date: dates[dates.length - 1], dates, rows, fetchedAt, stale };
     draw(lastData);
     $('#key').style.display = '';
     $('#sub').textContent = 'Login benchmark: 10 AM to 8 PM = 10:00:00 per agent per day worked • Data source: Ozonetel Agent State Summary API • Talk Time = Total Dial Duration';
     $('#liveNote').textContent = empty.length ? 'No summary data for ' + empty.map(shortDate).join(', ') + (empty.includes(todayIST()) ? ' — today’s summary is published after the day closes.' : '.') : '';
     const at = new Date(fetchedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' });
-    $('#status').innerHTML = `Updated ${at} IST · ${dates.length} days`;
+    $('#status').innerHTML = `${stale?'Showing last collected data · ':''}Updated ${at} IST · ${dates.length} days`;
     loadCallCounts(lastData, dates, seq);
+    if(stale)retryPending(seq);else pendingDelay=30000;
   } catch (e) {
     if (seq !== loadSeq) return;
+    if(showPending(e,seq))return;
     $('#status').innerHTML = `<span class="badge err">Error</span> ${esc(e.message)}`;
     $('#main').innerHTML = `<div class="msg">Couldn't load data: ${esc(e.message)}</div>`;
   }
@@ -501,6 +526,7 @@ async function loadMany(dates) {
 
 async function load() {
   const dates = pickedDates();
+  if(rateRetry){clearTimeout(rateRetry);rateRetry=null;}
   if (dates.length > 1) return loadMany(dates);
   if (rateRetry) { clearTimeout(rateRetry); rateRetry = null; }
   const seq = ++loadSeq;
@@ -512,21 +538,24 @@ async function load() {
     const r = await fetch('/api/report?' + p);
     const data = await r.json();
     if (seq !== loadSeq) return;
-    if (!data.ok) throw new Error(data.error || 'Request failed');
+    if (!data.ok) throw reportError(data);
     lastData = data;
     draw(data);
     $('#key').style.display = data.live ? 'none' : '';
-    $('#sub').textContent = data.live ? 'Live from Ozonetel call records and agent status • Talk Time = time on call • Checks every 10 seconds; call records refresh about every 35 seconds'
+    $('#sub').textContent = data.live ? 'Live from Ozonetel call records and agent status • Talk Time = time on call • Checks every 10 seconds; shared reports refresh about every 5 minutes; queued updates may take longer'
       : 'Login benchmark: 10 AM to 8 PM = 10:00:00 per agent • Data source: Ozonetel Agent State Summary API • Talk Time = Total Dial Duration';
     $('#liveNote').textContent = data.live ? 'Live view: calls and talk time come from today’s call records (talk time = time actually on call); agent status refreshes as Ozonetel allows. Login %, Idle % and Gap vs 10h come from Ozonetel’s day summary, which is published after the day closes — pick yesterday’s date to see the full report.' : '';
+    if (data.statusWarning) { data.stale=true; data.warning=data.statusWarning; }
     const at = new Date(data.fetchedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' });
     $('#status').innerHTML = data.demo ? `<span class="badge demo">Sample data</span> ${esc(data.note || '')}`
       : data.stale ? `<span class="badge err">Showing last good data</span> ${esc(data.warning || '')}`
       : data.live ? `<span class="badge live">Live</span> Updated ${at} IST · checks every 10 seconds`
       : `Report updated ${at} IST`;
     if (!data.live) loadCallCounts(data, [d], seq);
+    if(data.sharedIntegration?.pending)retryPending(seq);else pendingDelay=30000;
   } catch (e) {
     if (seq !== loadSeq) return;
+    if(showPending(e,seq))return;
     const limited = /max limit|rate limit/i.test(e.message);
     $('#status').innerHTML = limited ? '<span class="badge err">Ozonetel rate limit</span> Retrying in about a minute…'
       : `<span class="badge err">Error</span> ${esc(e.message)}`;

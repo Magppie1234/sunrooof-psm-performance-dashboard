@@ -1,74 +1,16 @@
 const CallMetrics = require('../call-metrics');
 // Serverless proxy: fetches Ozonetel CloudAgent "Agent State Summary" for one day
 // and returns normalised rows. The API key never reaches the browser.
-function endpoint() {
-  let b = (process.env.OZONETEL_BASE_URL || process.env.OZONETEL_DOMAIN || 'in1-ccaas-api.ozonetel.com').trim();
-  if (!/^https?:\/\//i.test(b)) b = 'https://' + b;
-  b = b.replace(/\/+$/, '');
-  if (/\/summaryReport$/i.test(b)) return b;
-  if (/\/ca_reports$/i.test(b)) return b + '/summaryReport';
-  return b.replace(/\/(ca_apis|ca_reports).*$/i, '') + '/ca_reports/summaryReport';
+const hub=require('../lib/integration-client.cjs');
+const readLoginStatus=require('../lib/login-status').createReader({query:hub.query,observe:hub.observe});
+async function oz(method,path,body) {
+  try { return await hub.query(path,body); }
+  catch { return {http:503,j:{status:'error',message:'Shared report temporarily unavailable; saved records are retained.'}}; }
 }
-function base() { return endpoint().replace(/\/ca_reports\/summaryReport$/i, ''); }
-
-
-// TOKEN_AUTH: token lasts 60 min, max 10 generations/hour, a new one invalidates the old.
-let tok = { value: null, at: 0 }, tokPending = null;
-async function getToken(force) {
-  if (!force && tok.value && Date.now() - tok.at < 50 * 60 * 1000) return tok.value;
-  if (tokPending) return tokPending; // one generation at a time: a new token invalidates the previous one
-  tokPending = newToken().finally(() => { tokPending = null; });
-  return tokPending;
-}
-async function newToken() {
-  if (Date.now() - tok.at < 5 * 1000 && tok.value) return tok.value; // just refreshed by another request
-  const r = await fetch(base() + '/ca_reports/CAToken/generateToken', {
-    method: 'POST',
-    headers: { apiKey: process.env.OZONETEL_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userName: process.env.OZONETEL_USERNAME }),
-  });
-  const t = await r.text();
-  let j; try { j = JSON.parse(t); } catch { j = {}; }
-  const value = j.token || j.data?.token;
-  if (!value) throw new Error('Token generation failed: ' + (j.message || t.slice(0, 200) || 'HTTP ' + r.status));
-  tok = { value, at: Date.now() };
-  return value;
-}
-
-
 async function callSummary(body) {
-  const send = (token) => fetch(endpoint(), {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  let r = await send(await getToken(false));
-  if (r.status === 401) r = await send(await getToken(true)); // token expired or replaced elsewhere
-  return r;
+  const r=await oz('POST','/ca_reports/summaryReport',body);
+  return new Response(JSON.stringify(r.j),{status:r.http||503,headers:{'Content-Type':'application/json'}});
 }
-
-
-function oz(method, path, body) {
-  return new Promise(async (ok) => {
-    const send = (token) => new Promise((done) => {
-      const u = new URL(base() + path);
-      const data = JSON.stringify(body);
-      const rq = require('https').request({ hostname: u.hostname, path: u.pathname, method,
-        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (rs) => {
-        let b = ''; rs.on('data', (c) => (b += c));
-        rs.on('end', () => { let j; try { j = CallMetrics.parseJson(b); } catch { j = { status: 'error', message: b.slice(0, 200) }; } done({ http: rs.statusCode, j }); });
-      });
-      rq.on('error', (e) => done({ http: 0, j: { status: 'error', message: e.message } }));
-      rq.write(data); rq.end();
-    });
-    try {
-      let r = await send(await getToken(false));
-      if (r.http === 401) r = await send(await getToken(true));
-      ok(r);
-    } catch (e) { ok({ http: 0, j: { status: 'error', message: e.message } }); }
-  });
-}
-
 
 // ---- Call records (CDR): one day per request, max 2 requests/min, last 15 days only.
 const liveCache = { stateAt: 0, stateMap: {} };
@@ -76,7 +18,7 @@ const cdrCache = new Map(); // date -> { at, calls }
 const savedCallCache = new Map();
 async function savedCalls(date) {
   const hit = savedCallCache.get(date);
-  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.calls;
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) { hub.observe(hit.calls.integration); return hit.calls; }
   const month = date.slice(0, 7);
   const r = await fetch(`https://sunrooof-agent-calls-20260923.vercel.app/api/calls?month=${month}&date=none`);
   if (!r.ok) throw new Error('Saved call records unavailable');
@@ -87,22 +29,23 @@ async function savedCalls(date) {
     TalkTime: c['Talk Time'], Status: c.Status, Type: c['Call Type'],
     CallID: CallMetrics.callId(c), UCID: CallMetrics.attemptId(c), CallDate: date,
   }));
-  savedCallCache.set(date, {at: Date.now(), calls});
+  calls.integration={complete:true,stale:true,pending:true,sampledAt:Date.parse(data.sharedIntegration?.oldestSampleAt||data.updatedAt||'')/1000||0};
+  hub.observe(calls.integration);savedCallCache.set(date, {at: Date.now(), calls});
   return calls;
 }
 async function fetchCalls(date, now) {
   const isToday = date === now.date;
   const hit = cdrCache.get(date);
-  if (hit && Date.now() - hit.at < (isToday ? 35 : 300) * 1000) return hit.calls;
+  if (hit && Date.now() - hit.at < (isToday ? 35 : 300) * 1000) { hub.observe(hit.calls.integration); return hit.calls; }
   const r = await oz('GET', '/ca_reports/fetchCDRDetails', { userName: process.env.OZONETEL_USERNAME,
     fromDate: `${date} 00:00:00`, toDate: isToday ? `${date} ${now.time}` : `${date} 23:59:59` });
   if (String(r.j.status).toLowerCase() === 'success') {
     const calls = Array.isArray(r.j.details) ? r.j.details : [];
-    cdrCache.set(date, { at: Date.now(), calls });
+    calls.integration=r.j.integration; cdrCache.set(date, { at: (r.j.integration?.sampledAt||Date.now()/1000)*1000, calls });
     return calls;
   }
   if (/no data/i.test(String(r.j.message))) { cdrCache.set(date, { at: Date.now(), calls: [] }); return []; }
-  if (hit) return hit.calls; // rate limited or a blip: keep showing the last good pull
+  if (hit) { hub.observe(hit.calls.integration); return hit.calls; } // rate limited or a blip: keep showing the last good pull
   throw new Error('Call records: ' + (typeof r.j.message === 'string' ? r.j.message : 'HTTP ' + r.http));
 }
 
@@ -183,21 +126,8 @@ async function liveData(date, now) {
     r.talk += c.talk; r.wrapup += c.wrapup;
     if (c.lastStart > r.lastCall) r.lastCall = c.lastStart;
   }
-  const ids = [...new Set([...Object.keys(names), ...String(process.env.OZONETEL_AGENT_IDS || '').split(',').map((x) => x.trim()).filter(Boolean)])];
-  // AgentDetails takes one agent per call and allows 10 calls/min: refresh up to 4 of the stalest agents every 25 s.
-  const sm = liveCache.stateMap || (liveCache.stateMap = {});
-  if (ids.length && Date.now() - (liveCache.stateAt || 0) > 25 * 1000) {
-    liveCache.stateAt = Date.now();
-    const due = ids.slice().sort((a, b) => ((sm[a] && sm[a].at) || 0) - ((sm[b] && sm[b].at) || 0)).slice(0, 4);
-    for (const id of due) { // sequential: parallel calls could each regenerate the token and invalidate one another
-      const r = await oz('POST', '/ca_apis/AgentDetails', { userName: process.env.OZONETEL_USERNAME, agentId: id });
-      const x = (Array.isArray(r.j.message) ? r.j.message : Array.isArray(r.j.details) ? r.j.details : [])[0];
-      if (x) sm[id] = { agentId: x.AgentId || id, agentName: x.AgentName, state: x.State, mode: x.Mode, since: x.Since, at: Date.now() };
-      else if (r.j && typeof r.j.message === 'string' && !/rate|limit/i.test(r.j.message)) sm[id] = { agentId: id, agentName: names[id], state: 'LOGGED OUT', mode: '', since: '', at: Date.now() };
-    }
-  }
-  const state = ids.filter((id) => sm[id]).map((id) => ({ ...sm[id], checkedSecsAgo: Math.round((Date.now() - sm[id].at) / 1000) }));
-  return { rows: Object.values(rows), status: state, slots: timeSlots(calls), unassigned, unassignedMissed, totalCalls: CallMetrics.group(calls).length };
+  const login = await readLoginStatus(names, String(process.env.OZONETEL_AGENT_IDS || '').split(',').map(x=>x.trim()).filter(Boolean));
+  return { rows: Object.values(rows), ...login, slots: timeSlots(calls), unassigned, unassignedMissed, totalCalls: CallMetrics.group(calls).length };
 }
 
 
@@ -270,7 +200,7 @@ async function intervalSummary(date) {
       const status = String(raw.status || '').toLowerCase();
       let rows;
       if (['error', 'fail', 'false'].includes(status)) {
-        const message = typeof raw.message === 'string' ? raw.message : 'Ozonetel returned an error';
+        const message = typeof raw.message === 'string' ? raw.message : 'Shared report is pending';
         if (!/no data/i.test(message)) throw new Error(`${period.label}: ${message}`);
         rows = [];
       } else rows = normalise(raw);
@@ -316,8 +246,9 @@ module.exports = async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const now = istNow();
   const date = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : now.date;
-  const key = process.env.OZONETEL_API_KEY, user = process.env.OZONETEL_USERNAME;
-  const demo = url.searchParams.get('demo') === '1' || !key || !user;
+  const key = hub.configured(), user = process.env.OZONETEL_USERNAME;
+  const demo = url.searchParams.get('demo') === '1';
+  if(!demo && (!key || !user)) return res.status(503).json({ok:false,error:'Shared reporting is not configured.'});
 
 
   res.setHeader('Cache-Control', 'no-store');
@@ -361,7 +292,7 @@ module.exports = async (req, res) => {
 
   if (demo) {
     return res.status(200).json({ ok: true, demo: true, date: '2026-09-18', fetchedAt: new Date().toISOString(), rows: demoRows(),
-      note: !key || !user ? 'OZONETEL_API_KEY / OZONETEL_USERNAME not set — showing sample data.' : 'Demo mode.' });
+      note: !key || !user ? 'Shared reporting is not configured.' : 'Demo mode.' });
   }
 
 
@@ -414,8 +345,8 @@ module.exports = async (req, res) => {
     const text = await r.text();
     let raw; try { raw = JSON.parse(text); } catch { raw = { status: 'error', message: text.slice(0, 300) }; }
     const status = String(raw.status || '').toLowerCase();
-    if (status === 'error' || status === 'fail' || status === 'false') {
-      const msg = typeof raw.message === 'string' ? raw.message : 'Ozonetel returned an error';
+    if (!r.ok || !['success','true'].includes(status)) {
+      const msg = typeof raw.message === 'string' ? raw.message : 'Shared report is pending';
       if (/no data/i.test(msg)) {
         const payload = { ok: true, date, fetchedAt: new Date().toISOString(), rows: [] };
         cache.set(date, { at: Date.now(), payload });
@@ -423,14 +354,17 @@ module.exports = async (req, res) => {
         return res.status(200).json(payload);
       }
       if (hit) return res.status(200).json({ ...hit.payload, stale: true, warning: msg });
-      return res.status(502).json({ ok: false, error: msg + ' (host: ' + new URL(endpoint()).host + ', HTTP ' + r.status + ')' });
+      return res.status(502).json({ ok: false, error: msg });
     }
-    const payload = { ok: true, date, fetchedAt: new Date().toISOString(), rows: normalise(raw) };
+    hub.observe(raw.integration);
+    const payload = { ok: true, date, fetchedAt: new Date((raw.integration?.sampledAt||Date.now()/1000)*1000).toISOString(), rows: normalise(raw), integration:raw.integration };
     cache.set(date, { at: Date.now(), payload });
     if (pastDayCache && url.searchParams.get('raw') !== '1') res.setHeader('Cache-Control', pastDayCache);
     return res.status(200).json(url.searchParams.get('raw') === '1' ? {...payload, raw} : payload);
   } catch (e) {
     if (hit) return res.status(200).json({ ...hit.payload, stale: true, warning: String(e.message || e) });
-    return res.status(502).json({ ok: false, error: 'Could not reach Ozonetel at ' + (() => { try { return new URL(endpoint()).host; } catch { return 'invalid OZONETEL_BASE_URL'; } })() + ': ' + (e.cause?.code || e.message || e) });
+    return res.status(502).json({ ok: false, error: 'Shared report temporarily unavailable. Saved records are retained.' });
   }
 };
+
+module.exports=hub.wrap(module.exports);

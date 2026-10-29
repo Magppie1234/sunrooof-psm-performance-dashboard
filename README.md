@@ -4,7 +4,21 @@ Source for the existing [Agent Productivity Dashboard](https://agent-productivit
 
 ## Configuration
 
-`.env.example` shows the only Ozonetel API key to add: **`OZONETEL_API_KEY`**. The app also needs the corresponding `OZONETEL_USERNAME`. Put actual values in Vercel's project environment settings; never commit them. For local development, copy `.env.example` to ignored `.env.local` and fill in your values. Optional filters and the dashboard password are listed in the example file.
+Copy `.env.example` to ignored `.env.local` for local development, or configure these server-side variables in Vercel:
+
+- `PSM_INTEGRATION_URL`: HTTPS base URL of the existing shared Ozonetel backend.
+- `PSM_INTEGRATION_KEY`: the report-client secret issued by that backend.
+- `OZONETEL_USERNAME`: the CloudAgent account username matching the client's account.
+
+Optional: `OZONETEL_AGENT_IDS` and `OZONETEL_MODE_TYPES` filter supported reports; `DASHBOARD_PASSWORD` enables the existing password gate. Never commit actual secrets. This dashboard does not need an Ozonetel API key or token; those remain in the separate backend.
+
+## Shared backend and data freshness
+
+All provider reads use `lib/integration-client.cjs` and the shared backend's `/api/integration/query`. This preserves centralized credentials, cached snapshots, queueing and rate limits across the dialer and other reports. Do not restore independent provider requests or change the shared backend as part of a dashboard release.
+
+Logged-in agents come from the complete `getAgentLogins` snapshot, including agents with no calls. Incomplete, failed or more-than-two-minute-old login snapshots retain last-known states but do not provide a current logged-in count. The report normally receives call snapshots around every five minutes; refreshes may be deferred for provider budgets or higher-priority work. Browser polling does not guarantee fresh provider data.
+
+“Showing last good data” means a saved snapshot is being shown while collection is delayed or queued. It must not be presented as current live data. The integration health endpoint checks connectivity/account alignment without spending provider quota. See `INVESTIGATION-2026-10-29.md` for the observed delay and verification limits.
 
 The report's historical call fallback reads `https://sunrooof-agent-calls-20260923.vercel.app/api/calls`, a separate deployed service. That service's code is not part of this dashboard repository.
 

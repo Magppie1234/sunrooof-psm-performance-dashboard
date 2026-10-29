@@ -131,7 +131,7 @@
       try {
         const response = await fetch(`${endpoint}?view=slot-summary&date=${encodeURIComponent(date)}`);
         const data = await response.json();
-        if (!response.ok || !data.ok) throw Error(data.error || 'Could not load time-slot summaries');
+        if (!response.ok || !data.ok){const e=Error(data.message || data.error || 'Could not load time-slot summaries');e.pending=!!data.pending;throw e;}
         if (!data.pending && (!Array.isArray(data.slots) || data.slots.length !== 4)) throw Error('Time-slot summary is incomplete');
         if (current !== requestId) return;
         const names = new Map();
@@ -142,12 +142,12 @@
       } catch (error) {
         if (current !== requestId) return;
         last = {date, agents: []};
-        if (/max limit|rate limit/i.test(error.message) && retryCount < 2) {
+        if (error.pending || /max limit|rate limit/i.test(error.message) && retryCount < 2) {
           retryCount++;
-          status.textContent = 'Ozonetel is temporarily rate-limited. Retrying the time-slot reports automatically…';
+          status.textContent = error.pending?'Collecting time-slot reports. Retrying automatically…':'Ozonetel is temporarily rate-limited. Retrying the time-slot reports automatically…';
           retryTimer = setTimeout(() => {
-            if (requestId === current) setSelection([date], true);
-          }, 65000);
+            if (requestId === current && !document.hidden) setSelection([date], true);
+          }, error.pending?Math.min(120000,30000*Math.pow(2,Math.min(retryCount-1,2))):65000);
         } else status.innerHTML = `Time-slot summaries are unavailable: ${escape(error.message)} <button type="button" data-action="retry">Retry</button>`;
       }
     }
