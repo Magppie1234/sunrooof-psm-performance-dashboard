@@ -127,7 +127,10 @@ async function liveData(date, now) {
     if (c.lastStart > r.lastCall) r.lastCall = c.lastStart;
   }
   const login = await readLoginStatus(names, String(process.env.OZONETEL_AGENT_IDS || '').split(',').map(x=>x.trim()).filter(Boolean));
-  return { rows: Object.values(rows), ...login, slots: timeSlots(calls), unassigned, unassignedMissed, totalCalls: CallMetrics.group(calls).length };
+  let modeHistory;
+  try { modeHistory = await hub.modeHistory(date); } catch { modeHistory = null; }
+  const blended = require('../lib/blended-calls').summarize(calls, modeHistory, date);
+  return { rows: Object.values(rows), ...login, blended, slots: timeSlots(calls), unassigned, unassignedMissed, totalCalls: CallMetrics.group(calls).length };
 }
 
 

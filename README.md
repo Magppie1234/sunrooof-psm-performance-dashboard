@@ -18,6 +18,8 @@ All provider reads use `lib/integration-client.cjs` and the shared backend's `/a
 
 Logged-in agents come from the complete `getAgentLogins` snapshot, including agents with no calls. Incomplete, failed or more-than-two-minute-old login snapshots retain last-known states but do not provide a current logged-in count. The report normally receives call snapshots around every five minutes; refreshes may be deferred for provider budgets or higher-priority work. Browser polling does not guarantee fresh provider data.
 
+The live table also shows Blended calls, connected calls and talk time. Each counted call is matched by agent ID and start timestamp to that agent's recorded mode at or before the call start. Later mode changes do not rewrite earlier calls. This is a subset across the existing call types; Today So Far counts calls once. Missing mode coverage displays an em dash instead of a false zero. The existing report-client secret reads the backend's `/api/integration/agent-modes` endpoint, which reads stored events and makes no provider requests. See `backend-extension/README.md` and its patch for the approved backend addition and deployment baseline.
+
 “Showing last good data” means a saved snapshot is being shown while collection is delayed or queued. It must not be presented as current live data. The integration health endpoint checks connectivity/account alignment without spending provider quota. See `INVESTIGATION-2026-10-29.md` for the observed delay and verification limits.
 
 The report's historical call fallback reads `https://sunrooof-agent-calls-20260923.vercel.app/api/calls`, a separate deployed service. That service's code is not part of this dashboard repository.

@@ -1,0 +1,138 @@
+--- a/cloud/integration_routes.py
++++ b/cloud/integration_routes.py
+@@ -205,3 +205,23 @@
+         return dict(ok=True,deployment=os.environ.get('VERCEL_DEPLOYMENT_ID'),buckets=buckets,backlog=backlog,
+                     tokenRecovery={realm:{k:v for k,v in read_document('ozonetel:token-recovery:'+realm,{}).items() if k in ('status','next_retry_at','refreshed_at','failures')} for realm in ('API','REPORT')})
+     return await run_in_threadpool(status)
++
++
++@router.get('/api/integration/agent-modes')
++async def agent_mode_history(request:Request):
++    headers={'Cache-Control':'no-store'}
++    identity=client(request.headers)
++    if not identity:
++        return JSONResponse({'ok':False,'error':'Unauthorized'},status_code=401,headers=headers)
++    if 'cdr' not in identity.get('scopes',[]):
++        return JSONResponse({'ok':False,'error':'Reporting scope not granted'},status_code=403,headers=headers)
++    if set(request.query_params) != {'date'} or len(request.query_params.getlist('date')) != 1:
++        return JSONResponse({'ok':False,'error':'A single report date is required'},status_code=400,headers=headers)
++    from cloud.agent_mode_history import read_history
++    try:
++        result=await run_in_threadpool(read_history,identity['account'],request.query_params['date'])
++        return JSONResponse(result,status_code=200 if result['ok'] else 503,headers=headers)
++    except ValueError:
++        return JSONResponse({'ok':False,'error':'Invalid mode history date'},status_code=400,headers=headers)
++    except Exception:
++        return JSONResponse({'ok':False,'error':'Mode history is unavailable'},status_code=503,headers=headers)
+--- /dev/null
++++ b/cloud/agent_mode_history.py
+@@ -0,0 +1,35 @@
++"""Account-scoped read of existing agent events; never contacts Ozonetel."""
++from datetime import datetime, timedelta, timezone
++import re
++from cloud.database import connection
++from integrations.dialer.policy import IST
++
++MAX_EVENTS = 20000
++
++
++def read_history(account, date, now=None):
++    now = now or datetime.now(timezone.utc)
++    if not isinstance(date, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date):
++        raise ValueError('Invalid date')
++    start = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=IST)
++    age = (now.astimezone(IST).date() - start.date()).days
++    if not 0 <= age < 30:
++        raise ValueError('Date outside retained history')
++    through = min(now, start + timedelta(days=1))
++    with connection() as db:
++        db.execute('SET TRANSACTION READ ONLY')
++        db.execute("SET LOCAL statement_timeout='8s'")
++        rows = db.execute("""SELECT agent, occurred_at,
++            COALESCE(payload->'data'->>'agentMode',payload->'data'->>'agent_mode',''),
++            COALESCE(payload->'data'->>'action','')
++            FROM integration_events
++            WHERE kind='agent' AND lower(payload->>'username')=%s
++            AND occurred_at >= %s AND occurred_at <= %s
++            ORDER BY occurred_at,id LIMIT %s""",
++            (account.casefold(), start.timestamp(), through.timestamp(), MAX_EVENTS+1)).fetchall()
++    if len(rows) > MAX_EVENTS:
++        return dict(ok=False, date=date, truncated=True, error='Mode history exceeds response bound')
++    events = [dict(agentId=str(agent), at=datetime.fromtimestamp(at, timezone.utc).isoformat(),
++                   mode=str(mode or '')[:40], action=str(action or '')[:40])
++              for agent, at, mode, action in rows if agent and at > 0]
++    return dict(ok=True, date=date, through=through.isoformat(), events=events, truncated=False)
+--- /dev/null
++++ b/tests/test_agent_mode_history.py
+@@ -0,0 +1,71 @@
++from contextlib import nullcontext
++from datetime import datetime, timezone
++from unittest.mock import Mock
++import hashlib
++import json
++import pytest
++from fastapi import FastAPI
++from fastapi.testclient import TestClient
++from cloud import agent_mode_history as history, integration_routes as routes
++
++NOW=datetime(2026,10,31,11,0,tzinfo=timezone.utc)
++
++
++def test_query_is_read_only_account_scoped_and_projects_only_required_fields(monkeypatch):
++    rows=[('SRF675',1793424600,'BLENDED','calling')]
++    db=Mock();db.execute.return_value.fetchall.return_value=rows
++    monkeypatch.setattr(history,'connection',lambda:nullcontext(db))
++    result=history.read_history('Sunrooof','2026-10-31',NOW)
++    assert db.execute.call_args_list[0].args==('SET TRANSACTION READ ONLY',)
++    sql,params=db.execute.call_args.args
++    assert params[0]=='sunrooof' and params[-1]==history.MAX_EVENTS+1
++    assert "kind='agent'" in sql and "lower(payload->>'username')=%s" in sql
++    assert result['events'][0]['mode']=='BLENDED'
++    assert set(result['events'][0])=={'agentId','at','mode','action'}
++    assert result['through']==NOW.isoformat()
++
++
++@pytest.mark.parametrize('date',['2026-11-01','2026-10-01','2026-02-30','31-10-2026','2026-10-31\n',None])
++def test_invalid_or_out_of_retention_dates_do_not_access_database(monkeypatch,date):
++    connection=Mock();monkeypatch.setattr(history,'connection',connection)
++    with pytest.raises(ValueError):history.read_history('sunrooof',date,NOW)
++    connection.assert_not_called()
++
++
++def test_bound_returns_unavailable_instead_of_partial_events(monkeypatch):
++    db=Mock();db.execute.return_value.fetchall.return_value=[('A',1,'Manual','login')]*3
++    monkeypatch.setattr(history,'MAX_EVENTS',2)
++    monkeypatch.setattr(history,'connection',lambda:nullcontext(db))
++    result=history.read_history('sunrooof','2026-10-31',NOW)
++    assert result['ok'] is False and result['truncated'] is True and 'events' not in result
++
++
++def test_history_route_auth_scope_account_and_cache_policy(monkeypatch):
++    app=FastAPI();app.include_router(routes.router);client=TestClient(app)
++    token='test-report-secret-'+'a'*32
++    identity={'sha256':hashlib.sha256(token.encode()).hexdigest(),'account':'sunrooof','scopes':['cdr']}
++    monkeypatch.setenv('OZONETEL_ACCOUNT','sunrooof')
++    monkeypatch.setenv('PSM_INTEGRATION_CLIENTS',json.dumps([identity]))
++    read=Mock(return_value={'ok':True,'date':'2026-10-31','through':NOW.isoformat(),'events':[]})
++    monkeypatch.setattr(history,'read_history',read)
++    assert client.get('/api/integration/agent-modes?date=2026-10-31').status_code==401
++    headers={'Authorization':'Bearer '+token}
++    for query in ['','?date=2026-10-31&account=foreign','?date=2026-10-31&date=2026-10-30']:
++        assert client.get('/api/integration/agent-modes'+query,headers=headers).status_code==400
++    read.assert_not_called()
++    result=client.get('/api/integration/agent-modes?date=2026-10-31',headers=headers)
++    assert result.status_code==200 and result.headers['Cache-Control']=='no-store'
++    read.assert_called_once_with('sunrooof','2026-10-31')
++    identity['scopes']=['agent'];monkeypatch.setenv('PSM_INTEGRATION_CLIENTS',json.dumps([identity]))
++    assert client.get('/api/integration/agent-modes?date=2026-10-31',headers=headers).status_code==403
++    identity['scopes']=['cdr'];identity['account']='foreign'
++    monkeypatch.setenv('PSM_INTEGRATION_CLIENTS',json.dumps([identity]))
++    assert client.get('/api/integration/agent-modes?date=2026-10-31',headers=headers).status_code==401
++
++
++def test_history_failure_does_not_leak_internal_error(monkeypatch):
++    app=FastAPI();app.include_router(routes.router);client=TestClient(app)
++    monkeypatch.setattr(routes,'client',lambda _:dict(account='sunrooof',scopes=['cdr']))
++    monkeypatch.setattr(history,'read_history',Mock(side_effect=RuntimeError('private-db-error')))
++    result=client.get('/api/integration/agent-modes?date=2026-10-31')
++    assert result.status_code==503 and 'private-db-error' not in result.text
