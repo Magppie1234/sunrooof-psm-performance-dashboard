@@ -33,6 +33,8 @@ test('daily counts and time slots come from the same call records in one respons
   assert.equal(body.rows[1].calls, 1);
   assert.equal(body.slots[0].slots[0].boards.Blended.calls,1);
   assert.equal(body.rows[0].connected, 1);
+  assert.equal(body.rows[0].talk,60);
+  assert.equal(body.rows[1].talk,0);
   assert.equal(body.slots[0].slots.reduce((n, slot) => n + slot.calls, 0), 2);
   assert.equal(body.slots[0].slots.reduce((n, slot) => n + slot.connected, 0), 1);
 });

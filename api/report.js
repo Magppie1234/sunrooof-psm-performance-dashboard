@@ -102,9 +102,10 @@ function callCounts(calls, grouped = CallMetrics.group(calls)) {
     if (!agentId) continue;
     const mode = String(c.mode || 'Unknown');
     const key = JSON.stringify([agentId, mode]);
-    const row = groups.get(key) || {agentId, agentName: c.agentName || agentId, mode, calls: 0, connected: 0};
+    const row = groups.get(key) || {agentId, agentName: c.agentName || agentId, mode, calls: 0, connected: 0, talk: 0};
     row.calls++;
     if (c.connected) row.connected++;
+    row.talk += c.talk;
     groups.set(key, row);
   }
   return [...groups.values()];

@@ -167,7 +167,7 @@ function build(rows, callRows) {
     const a = agents.get(key);
     if ((r.login || 0) > 0) a.dates.add(r.date);
     const m = a.modes[mode] || (a.modes[mode] = zero());
-    for (const f of Object.keys(m)) { m[f] += r[f] || 0; a.tot[f] += r[f] || 0; }
+    for (const f of Object.keys(m)) { const value=f==='talk' && callRows ? 0 : r[f] || 0; m[f] += value; a.tot[f] += value; }
   }
   for (const r of callRows || []) {
     modeSet.add(titleCase(r.mode));
@@ -175,8 +175,8 @@ function build(rows, callRows) {
     if(!agents.has(key))agents.set(key,{id:r.agentId,name:r.agentName,modes:{},tot:zero(),dates:new Set()});
     const a = agents.get(key);
     const m = a.modes[titleCase(r.mode)] || (a.modes[titleCase(r.mode)] = zero());
-    m.calls += r.calls || 0; m.connected += r.connected || 0;
-    a.tot.calls += r.calls || 0; a.tot.connected += r.connected || 0;
+    m.calls += r.calls || 0; m.connected += r.connected || 0; m.talk += r.talk || 0;
+    a.tot.calls += r.calls || 0; a.tot.connected += r.connected || 0; a.tot.talk += r.talk || 0;
   }
   const modes = [...modeSet].sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
   for (const m of ['Inbound', 'Manual', 'Progressive']) if (!modes.includes(m) && rows.length) modes.push(m);
@@ -221,7 +221,7 @@ function render(data) {
   h += `<tr class="grand"><td colspan="2" style="text-align:left">GRAND TOTAL (${n} agents)</td>`;
   modes.forEach((m) => h += modeCells(grand.modes[m], cls(m)));
   h += `<td>${hms(grand.tot.login)}</td><td>${hms(grand.tot.talk)}</td><td>${avgLogin.toFixed(1)}%</td><td>${count(grand.tot.calls)}</td><td>${count(grand.tot.connected)}</td><td class="gap">${hms(totalGap)}</td></tr></tbody></table></div>`;
-  $('#main').innerHTML = h + '<p class="note">Calls and connected counts use the recorded agent mode at call start. Unknown means mode history is unavailable. Login and talk durations come from the Ozonetel state summary.</p>';
+  $('#main').innerHTML = h + '<p class="note">Calls, connected counts and talk time use call records and the recorded agent mode at call start. Unknown means mode history is unavailable. Login duration comes from the Ozonetel state summary.</p>';
 
   const sm = modes.filter((m) => grand.modes[m].login > 0 || grand.modes[m].calls > 0).sort((a, b) => grand.modes[b].login - grand.modes[a].login);
   let s = '<div class="sec"><h3>Mode Type Summary</h3><div class="scroll"><table><thead><tr>' +
@@ -413,11 +413,14 @@ $('#summaryCsv').addEventListener('click',()=>{
   if(!lastData||JSON.stringify(lastData.dates||[lastData.date])!==JSON.stringify(dates)){
     $('#status').textContent='Wait for the selected report to finish loading.';return;
   }
-  const rows=(lastData.rows||[]).filter(r=>isShown(r.agentId));
+  const rows=(lastData.rows||[]).filter(r=>isShown(r.agentId)).map(r=>({...r}));
+  if(!lastData.live && !lastData.callRows){$('#status').textContent='Wait for call records to finish loading before exporting.';return;}
+  const rowKeys=new Set(rows.map(r=>[r.date||lastData.date,r.agentId,r.mode].join('|')));
+  for(const c of lastData.callRows||[])if(isShown(c.agentId)&&!rowKeys.has([c.date||lastData.date,c.agentId,c.mode].join('|')))rows.push({...c,login:0,idle:0,pause:0,busy:0,wrapup:0});
   if(!rows.length){$('#status').textContent='No summary rows to download for this selection.';return}
   const counts=new Map((lastData.callRows||[]).map(r=>[[r.date||lastData.date,r.agentId,r.mode].join('|'),r]));
   const head=['Date','Agent ID','Agent name','Mode','Login seconds','Talk time (minutes)','Idle seconds','Pause seconds','Busy seconds','Wrap-up time (minutes)','Calls','Connected','Last call'];
-  saveCsv('agent-productivity-raw-summary-'+exportDates()+'.csv',head,rows.map(r=>{const count=counts.get([r.date||lastData.date,r.agentId,r.mode].join('|'));return [r.date||lastData.date,r.agentId,r.agentName,r.mode,r.login,minutes(r.talk),r.idle,r.pause,r.busy,minutes(r.wrapup),r.calls??count?.calls,r.connected??count?.connected,r.lastCall]}));
+  saveCsv('agent-productivity-raw-summary-'+exportDates()+'.csv',head,rows.map(r=>{const count=counts.get([r.date||lastData.date,r.agentId,r.mode].join('|'));return [r.date||lastData.date,r.agentId,r.agentName,r.mode,r.login,minutes(lastData.callRows ? count?.talk??0 : r.talk),r.idle,r.pause,r.busy,minutes(r.wrapup),r.calls??count?.calls,r.connected??count?.connected,r.lastCall]}));
 });
 $('#allCallsCsv').addEventListener('click',async()=>{
   const button=$('#allCallsCsv'),dates=pickedDates(),suffix=exportDates(),selectedIds=selected?new Set(selected):null;
@@ -481,7 +484,7 @@ async function loadCallCounts(data, dates, seq) {
   try {
     const rows = []; let callSlots, countWarning = '';
     for (const day of dates) {
-      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots', counting: 'agent-mode-v3'}));
+      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots', counting: 'agent-mode-v4'}));
       const result = await response.json();
       if (seq !== loadSeq) return;
       if (!result.ok) throw reportError(result);
