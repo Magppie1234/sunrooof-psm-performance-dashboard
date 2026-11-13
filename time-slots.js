@@ -43,7 +43,7 @@
       const lines = shown.flatMap(id => {
         const slots = values.get(id)?.slots || labels.map(blank);
         slots.forEach((slot, i) => add(totals[i], slot));
-        const order = ['Manual', 'Progressive', 'Inbound', 'Other'];
+        const order = ['Manual', 'Progressive', 'Inbound', 'Blended', 'Unknown', 'Other'];
         const components = [...new Set(slots.flatMap(slot => Object.keys(slot.boards || {})))].sort((a, b) =>
           (order.indexOf(a) < 0 ? order.length : order.indexOf(a)) - (order.indexOf(b) < 0 ? order.length : order.indexOf(b)) || a.localeCompare(b));
         if (!components.length) components.push(null);

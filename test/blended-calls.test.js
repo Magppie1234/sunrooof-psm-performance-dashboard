@@ -33,3 +33,13 @@ test('IST call times match UTC events without crossing identities', () => {
     event('B','2026-10-31T04:29:00Z','Manual')]),date).rows[0];
   assert.equal(row.calls,1);assert.equal(row.complete,true);
 });
+
+test('classification conserves calls and connections and retains source call types',()=>{
+ const calls=[call('10:00:00'),call('11:00:00',{Type:'Inbound',CallID:'1'}),call('11:01:00',{Type:'Inbound',CallID:'1',Status:'Unanswered',TalkTime:0}),call('13:00:00')];
+ const result=summarize(calls,history([event('A','09:59:00','Blended'),event('A','12:00:00','Manual')]),date);
+ assert.deepEqual(result.classified.map(c=>c.mode),['Blended','Blended','Manual']);
+ assert.deepEqual(result.classified.map(c=>c.callType),['Manual','Inbound','Manual']);
+ assert.equal(result.classified.reduce((n,c)=>n+Number(c.connected),0),3);
+ assert.equal(result.classified[1].attempts.length,2);
+ assert.equal(summarize(calls,null,date).classified[0].mode,'Unknown');
+});

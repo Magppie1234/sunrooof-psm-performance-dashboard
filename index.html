@@ -145,7 +145,7 @@ tr.vmrow td{background:#fffaf0}
 const BENCH = 10 * 3600;                 // 10:00:00 per agent
 const REFRESH_MS = 10 * 1000;            // check the shared live snapshot every 10 seconds
 const ORDER = ['Inbound', 'Manual', 'Progressive', 'Preview', 'Predictive', 'Blended'];
-const CLS = { Inbound: 'inb', Manual: 'man', Progressive: 'prog' };
+const CLS = { Inbound: 'inb', Manual: 'man', Progressive: 'prog', Blended:'blended' };
 const $ = (s) => document.querySelector(s);
 const hms = (s) => { s = Math.max(0, Math.round(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; };
 const pct = (a, b) => b > 0 ? (a / b * 100).toFixed(1) + '%' : '0.0%';
@@ -170,8 +170,10 @@ function build(rows, callRows) {
     for (const f of Object.keys(m)) { m[f] += r[f] || 0; a.tot[f] += r[f] || 0; }
   }
   for (const r of callRows || []) {
-    const a = agents.get(r.agentId || r.agentName);
-    if (!a) continue;
+    modeSet.add(titleCase(r.mode));
+    const key=r.agentId||r.agentName;
+    if(!agents.has(key))agents.set(key,{id:r.agentId,name:r.agentName,modes:{},tot:zero(),dates:new Set()});
+    const a = agents.get(key);
     const m = a.modes[titleCase(r.mode)] || (a.modes[titleCase(r.mode)] = zero());
     m.calls += r.calls || 0; m.connected += r.connected || 0;
     a.tot.calls += r.calls || 0; a.tot.connected += r.connected || 0;
@@ -219,9 +221,9 @@ function render(data) {
   h += `<tr class="grand"><td colspan="2" style="text-align:left">GRAND TOTAL (${n} agents)</td>`;
   modes.forEach((m) => h += modeCells(grand.modes[m], cls(m)));
   h += `<td>${hms(grand.tot.login)}</td><td>${hms(grand.tot.talk)}</td><td>${avgLogin.toFixed(1)}%</td><td>${count(grand.tot.calls)}</td><td>${count(grand.tot.connected)}</td><td class="gap">${hms(totalGap)}</td></tr></tbody></table></div>`;
-  $('#main').innerHTML = h;
+  $('#main').innerHTML = h + '<p class="note">Calls and connected counts use the recorded agent mode at call start. Unknown means mode history is unavailable. Login and talk durations come from the Ozonetel state summary.</p>';
 
-  const sm = modes.filter((m) => grand.modes[m].login > 0).sort((a, b) => grand.modes[b].login - grand.modes[a].login);
+  const sm = modes.filter((m) => grand.modes[m].login > 0 || grand.modes[m].calls > 0).sort((a, b) => grand.modes[b].login - grand.modes[a].login);
   let s = '<div class="sec"><h3>Mode Type Summary</h3><div class="scroll"><table><thead><tr>' +
     ['Mode Type', 'Login', 'Login Share', 'Talk Time', 'Calls', 'Idle', 'Connected', 'Wrap-up', 'Break'].map((t) => `<th class="h">${t}</th>`).join('') + '</tr></thead><tbody>';
   for (const m of sm) {
@@ -383,9 +385,9 @@ function drawCalls() {
   const multiDay = pickedDates().length > 1;
   $('#dlgMeta').textContent = `${multiDay ? datesLabel(pickedDates()) : fmtDate($('#date').value)} · ${counted.length} calls · ${list.length} attempt rows · ${nc} connected (${pct(nc, counted.length)}) · talk time ${hms(talk)} · avg ${hms(nc ? talk / nc : 0)} · ${nvm} possible voicemail${callWarning ? ' · ' + callWarning : ''}`;
   if (!list.length) { $('#dlgBody').innerHTML = '<div class="msg">No calls for this selection.</div>'; return; }
-  const head = (multiDay ? ['Date'] : []).concat(['Start', 'Mode', 'Number', 'Campaign / Skill', 'Status', 'Ring', 'Talk', 'Wrap-up', 'Hold', 'Hung up by', 'Disposition', 'Call ID']);
+  const head = (multiDay ? ['Date'] : []).concat(['Start', 'Call type', 'Agent mode at start', 'Number', 'Campaign / Skill', 'Status', 'Ring', 'Talk', 'Wrap-up', 'Hold', 'Hung up by', 'Disposition', 'Call ID']);
   $('#dlgBody').innerHTML = '<div class="scroll"><table><thead><tr>' + head.map((h) => `<th class="h">${h}</th>`).join('') + '</tr></thead><tbody>' +
-    list.map((c) => `<tr${isVm(c) ? ' class="vmrow"' : ''}>${multiDay ? `<td>${esc(shortDate(c.date))}</td>` : ''}<td>${esc(c.start || '')}</td><td><span class="pill ${modeCls(c.mode)}">${esc(titleCase(c.mode))}</span></td>` +
+    list.map((c) => `<tr${isVm(c) ? ' class="vmrow"' : ''}>${multiDay ? `<td>${esc(shortDate(c.date))}</td>` : ''}<td>${esc(c.start || '')}</td><td><span class="pill ${modeCls(c.mode)}">${esc(titleCase(c.mode))}</span></td><td>${esc(c.agentMode||'Unknown')}</td>` +
       `<td>${esc(c.number)}${c.recording ? ` <a href="${esc(c.recording)}" target="_blank" rel="noopener">▶</a>` : ''}</td>` +
       `<td class="l">${esc(c.campaign)}${c.skill ? ' · ' + esc(c.skill) : ''}</td>` +
       `<td class="${conn(c) ? 'ok' : 'no'}">${esc(conn(c) ? 'Connected' : c.status || 'Unanswered')}${isVm(c) ? '<span class="vm" title="Answered, but only ' + VM.maxTalk + ' s or less of talk — play the recording to confirm">Possible voicemail</span>' : ''}</td>` +
@@ -393,8 +395,8 @@ function drawCalls() {
       `<td>${esc(c.hangupBy)}</td><td class="l">${esc(c.disposition)}</td><td>${esc(c.callId || 'Unavailable')}</td></tr>`).join('') + '</tbody></table></div>';
 }
 function callsCsv() {
-  const head = ['Date', 'Start', 'End', 'Mode', 'Number', 'Campaign', 'Skill', 'Status', 'PossibleVoicemail', 'RingSecs', 'Talk time (minutes)', 'Wrap-up time (minutes)', 'HoldSecs', 'HangupBy', 'Disposition', 'Call ID', 'Attempt ID (UCID)'];
-  const rows = callRows.map((c) => [c.date, c.start, c.end, titleCase(c.mode), c.number, c.campaign, c.skill, c.status, isVm(c) ? 'Yes' : '', c.ring, minutes(c.talk), minutes(c.wrapup), c.hold, c.hangupBy, c.disposition, c.callId, c.ucid]);
+  const head = ['Date', 'Start', 'End', 'Call type', 'Agent mode at start', 'Number', 'Campaign', 'Skill', 'Status', 'PossibleVoicemail', 'RingSecs', 'Talk time (minutes)', 'Wrap-up time (minutes)', 'HoldSecs', 'HangupBy', 'Disposition', 'Call ID', 'Attempt ID (UCID)'];
+  const rows = callRows.map((c) => [c.date, c.start, c.end, titleCase(c.mode), c.agentMode, c.number, c.campaign, c.skill, c.status, isVm(c) ? 'Yes' : '', c.ring, minutes(c.talk), minutes(c.wrapup), c.hold, c.hangupBy, c.disposition, c.callId, c.ucid]);
   const pd = pickedDates();
   saveCsv(`calls_${callAgent ? callAgent.id : 'agent'}_${pd[0]}${pd.length > 1 ? '_to_' + pd[pd.length - 1] : ''}.csv`,head,rows);
 }
@@ -429,8 +431,8 @@ $('#allCallsCsv').addEventListener('click',async()=>{
       for(const c of data.calls||[])if(!selectedIds||selectedIds.has(c.agentId))all.push({...c,date});
     }
     if(!all.length){$('#status').textContent='No call records to download for this selection.';return}
-    const head=['Date','Agent ID','Agent name','Start','End','Mode','Number','Campaign','Skill','Status','Ring seconds','Talk time (minutes)','Wrap-up time (minutes)','Hold seconds','Duration seconds','Hung up by','Disposition','Customer status','Recording URL','Call ID','Attempt ID (UCID)'];
-    saveCsv('agent-productivity-raw-calls-'+suffix+'.csv',head,all.map(c=>[c.date,c.agentId,c.agentName,c.start,c.end,c.mode,c.number,c.campaign,c.skill,c.status,c.ring,minutes(c.talk),minutes(c.wrapup),c.hold,c.duration,c.hangupBy,c.disposition,c.customerStatus,c.recording,c.callId,c.ucid]));
+    const head=['Date','Agent ID','Agent name','Start','End','Call type','Agent mode at start','Number','Campaign','Skill','Status','Ring seconds','Talk time (minutes)','Wrap-up time (minutes)','Hold seconds','Duration seconds','Hung up by','Disposition','Customer status','Recording URL','Call ID','Attempt ID (UCID)'];
+    saveCsv('agent-productivity-raw-calls-'+suffix+'.csv',head,all.map(c=>[c.date,c.agentId,c.agentName,c.start,c.end,c.mode,c.agentMode,c.number,c.campaign,c.skill,c.status,c.ring,minutes(c.talk),minutes(c.wrapup),c.hold,c.duration,c.hangupBy,c.disposition,c.customerStatus,c.recording,c.callId,c.ucid]));
   }catch(error){$('#status').textContent='CSV download failed: '+String(error.message||error)}
   finally{button.disabled=false;button.textContent='Download raw calls CSV'}
 });
@@ -479,7 +481,7 @@ async function loadCallCounts(data, dates, seq) {
   try {
     const rows = []; let callSlots, countWarning = '';
     for (const day of dates) {
-      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots', counting: 'unique-inbound-v2'}));
+      const response = await fetch('/api/report?' + new URLSearchParams({view: 'call-counts', date: day, include: 'slots', counting: 'agent-mode-v3'}));
       const result = await response.json();
       if (seq !== loadSeq) return;
       if (!result.ok) throw reportError(result);

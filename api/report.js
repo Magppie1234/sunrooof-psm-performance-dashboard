@@ -56,7 +56,7 @@ function callList(calls, agent) {
     .map((c) => ({
       agentId: c.AgentID || c.AgentName || '', agentName: c.AgentName || c.AgentID || '',
       callId: CallMetrics.callId(c), ucid: CallMetrics.attemptId(c),
-      start: c.StartTime, end: c.EndTime, mode: String(c.Type || ''), number: c.CallerID || c.E164 || '', agentPhone: c.DialedNumber || '',
+      start: c.StartTime, end: c.EndTime, mode: String(c.Type || ''), agentMode:c.AgentMode||'Unknown', number: c.CallerID || c.E164 || '', agentPhone: c.DialedNumber || '',
       campaign: c.CampaignName || '', skill: c.Skill || '', status: c.Status || '', disposition: c.Disposition || '',
       talk: toSec(c.TalkTime), ring: toSec(c.CustomerRingTime), duration: toSec(c.Duration),
       wrapup: toSec(c.WrapupDuration), hold: toSec(c.HoldDuration), hangupBy: c.HangupBy || '',
@@ -67,10 +67,10 @@ function callList(calls, agent) {
 
 const reportCalls = require('../lib/report-calls').createReportCallReader({ fetchCalls, savedCalls });
 
-function timeSlots(calls) {
+function timeSlots(calls, grouped = CallMetrics.group(calls)) {
   const periods = [[10, 12], [12, 14], [14, 16], [16, 19]];
   const agents = new Map();
-  for (const c of CallMetrics.group(calls)) {
+  for (const c of grouped) {
     const id = c.agentId;
     const time = String(c.start || '').slice(-8);
     if (!id || !/^\d{2}:\d{2}:\d{2}$/.test(time)) continue;
@@ -82,7 +82,7 @@ function timeSlots(calls) {
     const cell = agents.get(id).slots[slot];
     const talk = c.talk;
     const mode = String(c.mode || '').toLowerCase();
-    const board = mode === 'progressive' ? 'Progressive' : mode === 'manual' ? 'Manual' : mode === 'inbound' ? 'Inbound' : 'Other';
+    const board = mode === 'progressive' ? 'Progressive' : mode === 'manual' ? 'Manual' : mode === 'inbound' ? 'Inbound' : mode === 'blended' ? 'Blended' : mode === 'unknown' ? 'Unknown' : 'Other';
     const connected = c.connected ? 1 : 0;
     cell.calls++;
     cell.connected += connected;
@@ -95,9 +95,9 @@ function timeSlots(calls) {
   return [...agents.values()];
 }
 
-function callCounts(calls) {
+function callCounts(calls, grouped = CallMetrics.group(calls)) {
   const groups = new Map();
-  for (const c of CallMetrics.group(calls)) {
+  for (const c of grouped) {
     const agentId = c.agentId;
     if (!agentId) continue;
     const mode = String(c.mode || 'Unknown');
@@ -110,6 +110,12 @@ function callCounts(calls) {
   return [...groups.values()];
 }
 
+
+async function classifiedCalls(calls,date) {
+  let history;
+  try { history=await hub.modeHistory(date); } catch { history=null; }
+  return require('../lib/blended-calls').summarize(calls,history,date).classified;
+}
 
 async function liveData(date, now) {
   const calls = await fetchCalls(date, now);
@@ -129,7 +135,7 @@ async function liveData(date, now) {
   const login = await readLoginStatus(names, String(process.env.OZONETEL_AGENT_IDS || '').split(',').map(x=>x.trim()).filter(Boolean));
   let modeHistory;
   try { modeHistory = await hub.modeHistory(date); } catch { modeHistory = null; }
-  const blended = require('../lib/blended-calls').summarize(calls, modeHistory, date);
+  const {classified: _classified, ...blended} = require('../lib/blended-calls').summarize(calls, modeHistory, date);
   return { rows: Object.values(rows), ...login, blended, slots: timeSlots(calls), unassigned, unassignedMissed, totalCalls: CallMetrics.group(calls).length };
 }
 
@@ -274,7 +280,7 @@ module.exports = async (req, res) => {
   if (url.searchParams.get('view') === 'slots') {
     try {
       const calls = await reportCalls(date, now, demo);
-      return res.status(200).json({ok: true, date, fetchedAt: new Date().toISOString(), rows: timeSlots(calls)});
+      return res.status(200).json({ok: true, date, fetchedAt: new Date().toISOString(), rows: timeSlots(calls, await classifiedCalls(calls,date))});
     } catch (e) {
       return res.status(502).json({ok: false, error: String(e.message || e)});
     }
@@ -283,10 +289,11 @@ module.exports = async (req, res) => {
   if (url.searchParams.get('view') === 'call-counts') {
     try {
       const calls = await reportCalls(date, now, demo);
+      const grouped = await classifiedCalls(calls,date);
       res.setHeader('Cache-Control', !calls.length || calls.archiveFallback ? 'no-store' : date < now.date
         ? 'public, s-maxage=3600, stale-while-revalidate=86400, stale-if-error=86400'
         : 'public, s-maxage=35, stale-while-revalidate=120, stale-if-error=300');
-      return res.status(200).json({ok: true, date, rows: callCounts(calls), slots: timeSlots(calls),
+      return res.status(200).json({ok: true, date, rows: callCounts(calls, grouped), slots: timeSlots(calls, grouped), modeBasis:'recorded-agent-mode',
         ...(calls.archiveFallback ? {archiveFallback: true, warning: 'Showing saved call records while Ozonetel is unavailable; this recent archive may be incomplete.'} : {})});
     } catch (e) {
       return res.status(502).json({ok: false, error: String(e.message || e)});
@@ -303,7 +310,10 @@ module.exports = async (req, res) => {
     try {
       const agent = url.searchParams.get('agent') || '';
       const calls = await reportCalls(date, now);
-      const rows = callList(calls, agent);
+      const grouped=await classifiedCalls(calls,date);
+      const modes=new Map(grouped.flatMap(c=>c.attempts.map(a=>[a,c.mode])));
+      const annotated=calls.map(c=>({...c,AgentMode:modes.get(c)||'Unknown'}));
+      const rows = callList(annotated, agent);
       return res.status(200).json({ ok: true, date, agent, fetchedAt: new Date((cdrCache.get(date) || {}).at || Date.now()).toISOString(), calls: rows,
         ...(calls.archiveFallback ? {archiveFallback: true, warning: 'Saved call records may be incomplete; retry when Ozonetel is available.'} : {}) });
     } catch (e) {
