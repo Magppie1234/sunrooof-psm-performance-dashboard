@@ -307,6 +307,16 @@ module.exports = async (req, res) => {
   }
 
 
+  if (url.searchParams.get('view') === 'mode-history') {
+    const agent=url.searchParams.get('agent')||'';
+    if(!agent)return res.status(400).json({ok:false,error:'Select an agent.'});
+    try {
+      const history=await hub.modeHistory(date);
+      return res.status(200).json({ok:true,date,agent,through:history.through,
+        events:history.events.filter(e=>e.agentId===agent).map(e=>({at:e.at,mode:e.mode,action:e.action}))});
+    } catch { return res.status(503).json({ok:false,error:'Recorded mode history unavailable.'}); }
+  }
+
   if (url.searchParams.get('view') === 'calls') {
     try {
       const agent = url.searchParams.get('agent') || '';
