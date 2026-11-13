@@ -110,9 +110,9 @@ test('preserve exact long IDs before parsing without changing numeric metrics or
 test('detail view shows unique totals and retains retries when filtering connected calls', () => {
   const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
   const source = html.slice(html.indexOf('function drawCalls()'), html.indexOf('function callsCsv()'));
-  const elements = {'#dlgMode': {value:'Inbound'}, '#dlgStatus': {value:''}, '#dlgMeta': {}, '#dlgBody': {}, '#date': {value:'2026-10-14'}};
+  const elements = {'#dlgMode': {value:'Blended'}, '#dlgStatus': {value:''}, '#dlgMeta': {}, '#dlgBody': {}, '#date': {value:'2026-10-14'}};
   const callRows = fixture([99,3,1,1,1,1,1,1,1,1,1], [1,2,3,4,5,6,7,8]).map(c => ({
-    callId:c.CallID, agentId:c.AgentID, date:'2026-10-14', mode:c.Type, start:c.StartTime,
+    callId:c.CallID, agentId:c.AgentID, date:'2026-10-14', mode:c.Type, agentMode:'Blended', start:c.StartTime,
     status:c.Status, talk:metrics.group([c])[0].talk, ring:0, wrapup:0, hold:0,
   }));
   const context = vm.createContext({CallMetrics:metrics, callRows, callWarning:'', $:selector=>elements[selector],
@@ -121,6 +121,10 @@ test('detail view shows unique totals and retains retries when filtering connect
   vm.runInContext(source+'\ndrawCalls();',context);
   assert.match(elements['#dlgMeta'].textContent, /11 calls · 111 attempt rows · 8 connected \(72.7%\)/);
   assert.equal((elements['#dlgBody'].innerHTML.match(/<tr>/g)||[]).length-1,111);
+  assert.match(elements['#dlgBody'].innerHTML,/Blended<\/span><\/td><td>Inbound/);
+  elements['#dlgMode'].value='Manual';vm.runInContext('drawCalls()',context);
+  assert.match(elements['#dlgMeta'].textContent,/0 calls/);
+  elements['#dlgMode'].value='Blended';
   elements['#dlgStatus'].value='conn';
   vm.runInContext('drawCalls()',context);
   assert.match(elements['#dlgMeta'].textContent, /8 calls · 10 attempt rows · 8 connected \(100.0%\)/);

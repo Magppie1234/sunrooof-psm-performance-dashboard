@@ -363,7 +363,7 @@ async function openCalls(id, name) {
       (d.calls || []).forEach((c) => all.push({ ...c, date: day }));
     }
     callRows = all;
-    const modes = [...new Set(callRows.map((c) => titleCase(c.mode)))];
+    const modes = [...new Set(callRows.map((c) => titleCase(c.agentMode || 'Unknown')))];
     $('#dlgMode').innerHTML = '<option value="">All modes</option>' + modes.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
     drawCalls();
   } catch (e) {
@@ -376,7 +376,7 @@ async function openCalls(id, name) {
 function drawCalls() {
   const fm = $('#dlgMode').value, fs = $('#dlgStatus').value;
   const conn = (c) => c.status === 'Answered' && c.talk > 0;
-  const counted = CallMetrics.group(callRows.filter(c => !fm || titleCase(c.mode) === fm))
+  const counted = CallMetrics.group(callRows.filter(c => !fm || titleCase(c.agentMode || 'Unknown') === fm))
     .filter(c => !fs || (fs === 'vm' ? c.attempts.some(isVm) : fs === 'conn' ? c.connected : !c.connected));
   const included = new Set(counted.flatMap(c => c.attempts));
   const list = callRows.filter(c => included.has(c));
@@ -385,9 +385,9 @@ function drawCalls() {
   const multiDay = pickedDates().length > 1;
   $('#dlgMeta').textContent = `${multiDay ? datesLabel(pickedDates()) : fmtDate($('#date').value)} · ${counted.length} calls · ${list.length} attempt rows · ${nc} connected (${pct(nc, counted.length)}) · talk time ${hms(talk)} · avg ${hms(nc ? talk / nc : 0)} · ${nvm} possible voicemail${callWarning ? ' · ' + callWarning : ''}`;
   if (!list.length) { $('#dlgBody').innerHTML = '<div class="msg">No calls for this selection.</div>'; return; }
-  const head = (multiDay ? ['Date'] : []).concat(['Start', 'Call type', 'Agent mode at start', 'Number', 'Campaign / Skill', 'Status', 'Ring', 'Talk', 'Wrap-up', 'Hold', 'Hung up by', 'Disposition', 'Call ID']);
+  const head = (multiDay ? ['Date'] : []).concat(['Start', 'Agent mode at start', 'Ozonetel call type', 'Number', 'Campaign / Skill', 'Status', 'Ring', 'Talk', 'Wrap-up', 'Hold', 'Hung up by', 'Disposition', 'Call ID']);
   $('#dlgBody').innerHTML = '<div class="scroll"><table><thead><tr>' + head.map((h) => `<th class="h">${h}</th>`).join('') + '</tr></thead><tbody>' +
-    list.map((c) => `<tr${isVm(c) ? ' class="vmrow"' : ''}>${multiDay ? `<td>${esc(shortDate(c.date))}</td>` : ''}<td>${esc(c.start || '')}</td><td><span class="pill ${modeCls(c.mode)}">${esc(titleCase(c.mode))}</span></td><td>${esc(c.agentMode||'Unknown')}</td>` +
+    list.map((c) => `<tr${isVm(c) ? ' class="vmrow"' : ''}>${multiDay ? `<td>${esc(shortDate(c.date))}</td>` : ''}<td>${esc(c.start || '')}</td><td><span class="pill ${modeCls(c.agentMode)}">${esc(titleCase(c.agentMode||'Unknown'))}</span></td><td>${esc(titleCase(c.mode))}</td>` +
       `<td>${esc(c.number)}${c.recording ? ` <a href="${esc(c.recording)}" target="_blank" rel="noopener">▶</a>` : ''}</td>` +
       `<td class="l">${esc(c.campaign)}${c.skill ? ' · ' + esc(c.skill) : ''}</td>` +
       `<td class="${conn(c) ? 'ok' : 'no'}">${esc(conn(c) ? 'Connected' : c.status || 'Unanswered')}${isVm(c) ? '<span class="vm" title="Answered, but only ' + VM.maxTalk + ' s or less of talk — play the recording to confirm">Possible voicemail</span>' : ''}</td>` +
